@@ -13,15 +13,17 @@ use App\Models\Coupon;
 use App\Models\CouponUsage;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Models\Cart;
 use App\Models\Commission;
 use App\Models\FinancialTransaction;
+use App\Models\Payment;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
 class OrderService
 {
     /**
-     * Server-side secure checkout calculation and order creation.
+     * Server-side authoritative checkout calculation and order creation.
      * The backend NEVER trusts frontend totals, prices, discounts, or delivery fees.
      */
     public function createOrder(User $customer, array $data): Order
@@ -31,12 +33,29 @@ class OrderService
             $restaurant = Restaurant::findOrFail($restaurantId);
 
             if ($restaurant->status !== 'approved' || !$restaurant->is_open) {
-                throw new Exception("Restaurant {$restaurant->name} is not accepting orders at this time.");
+                throw new Exception("Restaurant '{$restaurant->name}' is not accepting orders at this time.");
             }
 
-            $itemsData = $data['items'] ?? [];
+            // Retrieve items: prioritize server cart, or use validated items payload
+            $cart = Cart::where('user_id', $customer->id)->with(['items.product', 'items.variant'])->first();
+            $itemsData = [];
+
+            if ($cart && $cart->items()->count() > 0 && $cart->restaurant_id == $restaurantId) {
+                foreach ($cart->items as $ci) {
+                    $itemsData[] = [
+                        'product_id' => $ci->product_id,
+                        'quantity' => $ci->quantity,
+                        'variant_id' => $ci->variant_id,
+                        'addons' => $ci->selected_addons ?? [],
+                        'special_instructions' => $ci->special_instructions,
+                    ];
+                }
+            } elseif (!empty($data['items'])) {
+                $itemsData = $data['items'];
+            }
+
             if (empty($itemsData)) {
-                throw new Exception("Cannot create an empty order.");
+                throw new Exception("Cannot create an empty order. Please add dishes to your bag.");
             }
 
             $subtotal = 0.00;
@@ -45,42 +64,57 @@ class OrderService
             foreach ($itemsData as $itemInput) {
                 $product = Product::where('restaurant_id', $restaurantId)
                     ->where('id', $itemInput['product_id'])
-                    ->firstOrFail();
+                    ->first();
+
+                if (!$product) {
+                    throw new Exception("Dish #{$itemInput['product_id']} does not belong to '{$restaurant->name}'.");
+                }
 
                 if (!$product->is_available) {
-                    throw new Exception("Dish '{$product->name}' is currently sold out.");
+                    throw new Exception("Dish '{$product->name}' is currently unavailable or sold out.");
                 }
 
                 $quantity = max(1, (int)$itemInput['quantity']);
                 $unitPrice = $product->discount_price ?? $product->price;
                 $variantName = null;
 
+                // Strict Variant Verification
                 if (!empty($itemInput['variant_id'])) {
                     $variant = ProductVariant::where('product_id', $product->id)
                         ->where('id', $itemInput['variant_id'])
                         ->first();
-                    if ($variant) {
-                        $unitPrice += $variant->price_modifier;
-                        $variantName = $variant->name;
+
+                    if (!$variant) {
+                        throw new Exception("Selected variant #{$itemInput['variant_id']} does not belong to dish '{$product->name}'.");
                     }
+
+                    $unitPrice += $variant->price_modifier;
+                    $variantName = $variant->name;
                 }
 
+                // Strict Addon Verification
                 $addonTotal = 0.00;
                 $selectedAddons = [];
                 if (!empty($itemInput['addons']) && is_array($itemInput['addons'])) {
                     foreach ($itemInput['addons'] as $addonId) {
                         $addon = Addon::where('restaurant_id', $restaurantId)
                             ->where('id', $addonId)
-                            ->where('is_available', true)
                             ->first();
-                        if ($addon) {
-                            $addonTotal += $addon->price;
-                            $selectedAddons[] = [
-                                'addon_id' => $addon->id,
-                                'name' => $addon->name,
-                                'price' => $addon->price,
-                            ];
+
+                        if (!$addon) {
+                            throw new Exception("Selected addon #{$addonId} does not belong to '{$restaurant->name}'.");
                         }
+
+                        if (!$addon->is_available) {
+                            throw new Exception("Selected addon '{$addon->name}' is currently unavailable.");
+                        }
+
+                        $addonTotal += (float)$addon->price;
+                        $selectedAddons[] = [
+                            'addon_id' => $addon->id,
+                            'name' => $addon->name,
+                            'price' => (float)$addon->price,
+                        ];
                     }
                 }
 
@@ -99,42 +133,68 @@ class OrderService
                 ];
             }
 
-            if ($subtotal < $restaurant->minimum_order) {
+            if ($subtotal < (float)$restaurant->minimum_order) {
                 throw new Exception("Order subtotal of {$subtotal} is below restaurant minimum order threshold of {$restaurant->minimum_order}.");
             }
 
             // Server-side Coupon Validation
             $discount = 0.00;
             $appliedCouponCode = null;
-            if (!empty($data['coupon_code'])) {
-                $coupon = Coupon::where('code', strtoupper(trim($data['coupon_code'])))
-                    ->where('is_active', true)
-                    ->first();
+            $couponCodeInput = !empty($data['coupon_code']) ? $data['coupon_code'] : ($cart?->coupon_code ?? null);
 
-                if ($coupon && $subtotal >= $coupon->min_order_amount) {
-                    if (!$coupon->restaurant_id || $coupon->restaurant_id == $restaurantId) {
-                        if ($coupon->discount_type === 'percentage') {
-                            $calc = ($subtotal * $coupon->discount_value) / 100;
-                            $discount = $coupon->max_discount_amount ? min($calc, $coupon->max_discount_amount) : $calc;
-                        } else {
-                            $discount = min($subtotal, $coupon->discount_value);
-                        }
-                        $appliedCouponCode = $coupon->code;
-                    }
+            if (!empty($couponCodeInput)) {
+                $coupon = Coupon::where('code', strtoupper(trim($couponCodeInput)))->first();
+
+                if (!$coupon || !$coupon->is_active) {
+                    throw new Exception("Voucher code '{$couponCodeInput}' is invalid or inactive.");
                 }
+
+                if ($coupon->restaurant_id && $coupon->restaurant_id != $restaurantId) {
+                    throw new Exception("Voucher code '{$coupon->code}' cannot be used for restaurant '{$restaurant->name}'.");
+                }
+
+                if ($subtotal < $coupon->min_order_amount) {
+                    throw new Exception("Order subtotal must be at least {$coupon->min_order_amount} to use voucher '{$coupon->code}'.");
+                }
+
+                if ($coupon->usage_limit > 0 && $coupon->used_count >= $coupon->usage_limit) {
+                    throw new Exception("Voucher '{$coupon->code}' has reached its global redemption limit.");
+                }
+
+                // Customer per-user usage limit check
+                $userUsages = CouponUsage::where('coupon_id', $coupon->id)->where('user_id', $customer->id)->count();
+                if ($userUsages >= 5) {
+                    throw new Exception("You have exceeded the maximum redemptions for voucher '{$coupon->code}'.");
+                }
+
+                if ($coupon->discount_type === 'percentage') {
+                    $calc = ($subtotal * $coupon->discount_value) / 100;
+                    $discount = $coupon->max_discount_amount ? min($calc, $coupon->max_discount_amount) : $calc;
+                } else {
+                    $discount = min($subtotal, $coupon->discount_value);
+                }
+
+                $appliedCouponCode = $coupon->code;
             }
 
             // Server-side Fees & Tax calculations
-            $deliveryFee = $restaurant->delivery_fee;
+            $deliveryFee = (float)$restaurant->delivery_fee;
             $taxPercentage = (float)env('DEFAULT_TAX_PERCENTAGE', 5.0);
             $tax = round(($subtotal * $taxPercentage) / 100, 2);
             $serviceFee = (float)env('DEFAULT_SERVICE_FEE', 30.0);
-            $tip = max(0.00, (float)($data['tip'] ?? 0.00));
+            $tip = max(0.00, (float)($data['tip'] ?? ($cart?->rider_tip ?? 0.00)));
 
             $grandTotal = max(0.00, $subtotal - $discount + $deliveryFee + $tax + $serviceFee + $tip);
 
-            // Generate unique human-readable order number: FD-YYYYMMDD-XXXXXX
-            $orderNumber = 'FD-' . date('Ymd') . '-' . str_pad((string)random_int(1, 999999), 6, '0', STR_PAD_LEFT);
+            // Generate unique collision-safe order number: FD-YYYYMMDD-XXXXXX
+            do {
+                $orderNumber = 'FD-' . date('Ymd') . '-' . str_pad((string)random_int(1, 999999), 6, '0', STR_PAD_LEFT);
+            } while (Order::where('order_number', $orderNumber)->exists());
+
+            $paymentMethod = $data['payment_method'] ?? 'cod';
+
+            // Critical Security: Payment status for Stripe and COD ALWAYS begins as 'pending'
+            $paymentStatus = 'pending';
 
             $order = Order::create([
                 'order_number' => $orderNumber,
@@ -154,9 +214,9 @@ class OrderService
                 'service_fee' => $serviceFee,
                 'tip' => $tip,
                 'grand_total' => $grandTotal,
-                'payment_method' => $data['payment_method'] ?? 'cod',
-                'payment_status' => ($data['payment_method'] ?? 'cod') === 'stripe' ? 'paid' : 'pending',
-                'estimated_delivery_time' => $restaurant->estimated_delivery_time,
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
+                'estimated_delivery_time' => $restaurant->estimated_delivery_time ?? '25-35 min',
             ]);
 
             // Save items and item addons
@@ -191,8 +251,18 @@ class OrderService
                 'created_at' => now(),
             ]);
 
+            // Initial Payment record
+            Payment::create([
+                'order_id' => $order->id,
+                'gateway' => $paymentMethod,
+                'transaction_id' => null,
+                'amount' => $grandTotal,
+                'currency' => env('DEFAULT_CURRENCY_CODE', 'PKR'),
+                'status' => 'pending',
+            ]);
+
             // Record immutable commission calculation
-            $commRate = $restaurant->commission_rate ?: 15.0;
+            $commRate = $restaurant->commission_rate ?: (float)env('DEFAULT_COMMISSION_PERCENTAGE', 15.0);
             $platformCommission = round(($subtotal * $commRate) / 100, 2);
             $restaurantPayout = max(0.00, $subtotal - $platformCommission);
 
@@ -215,12 +285,12 @@ class OrderService
                 'platform_commission' => $platformCommission,
                 'restaurant_payout' => $restaurantPayout,
                 'delivery_fee' => $deliveryFee,
-                'rider_payout' => 100.00 + $tip,
+                'rider_payout' => (float)env('DEFAULT_RIDER_BASE_PAYOUT', 100.00) + $tip,
                 'gateway_fee' => $order->payment_method === 'stripe' ? round($grandTotal * 0.025, 2) : 0.00,
                 'status' => 'pending',
             ]);
 
-            // If coupon was applied, log usage
+            // If coupon was applied, log usage and increment count atomically
             if ($appliedCouponCode && isset($coupon)) {
                 CouponUsage::create([
                     'coupon_id' => $coupon->id,
@@ -237,14 +307,43 @@ class OrderService
     }
 
     /**
-     * Transition order status and append to status history
+     * Transition order status and enforce server-side state machine rules
      */
     public function updateStatus(Order $order, string $newStatus, ?string $note, string $actor): Order
     {
+        $allowedTransitions = [
+            'pending' => ['confirmed', 'cancelled'],
+            'confirmed' => ['preparing', 'cancelled'],
+            'preparing' => ['ready_for_pickup', 'cancelled'],
+            'ready_for_pickup' => ['assigned_to_rider', 'picked_up', 'cancelled'],
+            'assigned_to_rider' => ['picked_up', 'cancelled'],
+            'picked_up' => ['on_the_way'],
+            'on_the_way' => ['delivered'],
+            'delivered' => ['refunded'],
+            'cancelled' => [],
+            'refunded' => [],
+        ];
+
+        $currentStatus = $order->order_status;
+        $validTargets = $allowedTransitions[$currentStatus] ?? [];
+
+        if (!in_array($newStatus, $validTargets) && $currentStatus !== $newStatus) {
+            throw new Exception("Invalid order transition from '{$currentStatus}' to '{$newStatus}'.");
+        }
+
         $order->order_status = $newStatus;
+
+        // When order is delivered and payment method is COD, mark payment as paid
         if ($newStatus === 'delivered') {
             $order->payment_status = 'paid';
+            Payment::where('order_id', $order->id)->update(['status' => 'completed']);
+            FinancialTransaction::where('order_id', $order->id)->update(['status' => 'settled']);
+        } elseif ($newStatus === 'refunded') {
+            $order->payment_status = 'refunded';
+            Payment::where('order_id', $order->id)->update(['status' => 'refunded']);
+            FinancialTransaction::where('order_id', $order->id)->update(['status' => 'refunded']);
         }
+
         $order->save();
 
         OrderStatusHistory::create([
@@ -258,3 +357,4 @@ class OrderService
         return $order;
     }
 }
+

@@ -18,8 +18,10 @@ class CartItemRequest extends FormRequest
             'quantity' => ['required', 'integer', 'min:1'],
             'variant_id' => ['nullable', 'exists:product_variants,id'],
             'selected_addons' => ['nullable', 'array'],
+            'selected_addons.*' => ['integer', 'exists:addons,id'],
             'special_instructions' => ['nullable', 'string', 'max:255'],
             'replace_cart' => ['nullable', 'boolean'],
         ];
     }
 }
+

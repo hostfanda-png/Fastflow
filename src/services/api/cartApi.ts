@@ -25,4 +25,16 @@ export const cartApi = {
   clearCart: async (): Promise<ApiResponse<null>> => {
     return apiClient.delete('/cart/clear');
   },
+
+  applyCoupon: async (code: string): Promise<ApiResponse<any>> => {
+    return apiClient.post('/cart/coupon', { code });
+  },
+
+  removeCoupon: async (): Promise<ApiResponse<any>> => {
+    return apiClient.delete('/cart/coupon');
+  },
+
+  setTip: async (tip: number): Promise<ApiResponse<any>> => {
+    return apiClient.post('/cart/tip', { tip });
+  },
 };

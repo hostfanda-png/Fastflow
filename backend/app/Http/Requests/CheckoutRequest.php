@@ -23,12 +23,13 @@ class CheckoutRequest extends FormRequest
             'payment_method' => ['required', 'string', 'in:cod,stripe,wallet'],
             'coupon_code' => ['nullable', 'string'],
             'tip' => ['nullable', 'numeric', 'min:0'],
-            'items' => ['required', 'array', 'min:1'],
-            'items.*.product_id' => ['required', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items' => ['nullable', 'array'],
+            'items.*.product_id' => ['required_with:items', 'exists:products,id'],
+            'items.*.quantity' => ['required_with:items', 'integer', 'min:1'],
             'items.*.variant_id' => ['nullable', 'exists:product_variants,id'],
             'items.*.addons' => ['nullable', 'array'],
             'items.*.special_instructions' => ['nullable', 'string', 'max:255'],
         ];
     }
 }
+

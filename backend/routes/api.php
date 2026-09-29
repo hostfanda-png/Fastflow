@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\OwnerRestaurantController;
 use App\Http\Controllers\Api\V1\MenuController;
 use App\Http\Controllers\Api\V1\CartController;
 use App\Http\Controllers\Api\V1\OrderController;
+use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\RiderController;
 use App\Http\Controllers\Api\V1\ReviewController;
 use App\Http\Controllers\Api\V1\CouponController;
@@ -33,6 +34,9 @@ Route::prefix('v1')->group(function () {
     Route::get('coupons', [CouponController::class, 'index']);
     Route::post('coupons/validate', [CouponController::class, 'validateCoupon']);
 
+    // Public Webhooks
+    Route::post('payments/stripe/webhook', [PaymentController::class, 'stripeWebhook']);
+
     // Authenticated Customer Routes
     Route::middleware(['auth:sanctum'])->group(function () {
         // Cart
@@ -41,6 +45,9 @@ Route::prefix('v1')->group(function () {
             Route::post('items', [CartController::class, 'addItem']);
             Route::put('items/{item}', [CartController::class, 'updateItem']);
             Route::delete('clear', [CartController::class, 'clearCart']);
+            Route::post('coupon', [CartController::class, 'applyCoupon']);
+            Route::delete('coupon', [CartController::class, 'removeCoupon']);
+            Route::post('tip', [CartController::class, 'setTip']);
         });
 
         // Checkout & Orders
@@ -49,6 +56,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [OrderController::class, 'index']);
             Route::get('{order}', [OrderController::class, 'show']);
             Route::post('{order}/cancel', [OrderController::class, 'cancel']);
+        });
+
+        // Payments
+        Route::prefix('payments')->group(function () {
+            Route::post('stripe/create-intent', [PaymentController::class, 'createIntent']);
         });
 
         // Customer Profile & Address Management

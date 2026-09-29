@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { 
   User, 
   Restaurant, 
@@ -327,6 +327,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cmsPages, setCmsPages] = useState<CMSPage[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
 
+  const logAuditAction = (action: string, moduleName: string, recordId?: string, details?: string) => {
+    const newLog: AuditLog = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      action,
+      module: moduleName,
+      recordId: recordId || '',
+      userId: currentUser?.id || 'sys',
+      userName: currentUser?.name || 'System User',
+      role: currentUser?.role || 'customer',
+      timestamp: new Date().toISOString(),
+      details: details || '',
+      ip: '127.0.0.1'
+    };
+    setAuditLogs((prev) => [newLog, ...prev.slice(0, 49)]);
+  };
+
   // Location
   const [selectedCity, setSelectedCity] = useState('Lahore');
   const [selectedArea, setSelectedArea] = useState('Gulberg III');
@@ -397,6 +413,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (riderRes.status === 'fulfilled' && riderRes.value.data) {
         setRiders(riderRes.value.data);
       }
+
+      // Synchronize authenticated user resources
+      if (localStorage.getItem('fastflow_auth_token')) {
+        try {
+          const [cartRes, ordRes, profRes] = await Promise.allSettled([
+            cartApi.getCart(),
+            orderApi.getAll(),
+            customerApi.getProfile(),
+          ]);
+
+          if (cartRes.status === 'fulfilled' && cartRes.value.data) {
+            syncCartState(cartRes.value.data);
+          }
+
+          if (ordRes.status === 'fulfilled' && ordRes.value.data) {
+            setOrders(ordRes.value.data);
+          }
+
+          if (profRes.status === 'fulfilled' && profRes.value.data?.addresses) {
+            setSavedAddresses(profRes.value.data.addresses);
+            if (profRes.value.data.addresses.length > 0 && !currentAddress) {
+              setCurrentAddress(profRes.value.data.addresses[0]);
+            }
+          }
+        } catch {
+          // Handled gracefully
+        }
+      }
     } catch (err: any) {
       setApiError(err.message || 'Error fetching data from Fastflow API');
     } finally {
@@ -408,50 +452,90 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refreshData();
   }, [selectedCity]);
 
-  // Audit Logger
-  const logAuditAction = (action: string, module: string, recordId?: string, details?: string) => {
-    const entry: AuditLog = {
-      id: `log-${Date.now()}`,
-      userId: currentUser?.id || 'guest',
-      userName: currentUser?.name || 'Guest',
-      role: currentUser?.role || 'customer',
-      action,
-      module,
-      recordId,
-      ip: '127.0.0.1',
-      timestamp: new Date().toISOString(),
-      details
-    };
-    setAuditLogs((prev) => [entry, ...prev]);
+  // Server Cart State Synchronizer
+  const [serverCart, setServerCart] = useState<any>(null);
+
+  const syncCartState = (serverCartData: any) => {
+    if (!serverCartData) {
+      setCart([]);
+      setServerCart(null);
+      return;
+    }
+    setServerCart(serverCartData);
+    if (serverCartData.items && Array.isArray(serverCartData.items)) {
+      const mappedItems: CartItem[] = serverCartData.items.map((it: any) => ({
+        id: String(it.id),
+        productId: String(it.product_id),
+        restaurantId: String(serverCartData.restaurant?.id || ''),
+        productName: it.product_name,
+        productImage: it.product_image || '',
+        unitPrice: it.unit_price,
+        quantity: it.quantity,
+        itemTotal: it.item_total,
+        selectedVariant: it.variant ? { id: String(it.variant.id), name: it.variant.name, priceModifier: 0 } : undefined,
+        selectedAddons: (it.addons || []).map((ad: any) => ({ addonId: String(ad.addon_id), name: ad.name, price: ad.price })),
+        specialInstructions: it.special_instructions,
+      }));
+      setCart(mappedItems);
+    } else {
+      setCart([]);
+    }
   };
 
   // Cart restaurant detection
-  const cartRestaurant = cart.length > 0 
-    ? restaurants.find((r) => String(r.id) === String(cart[0].restaurantId)) || null 
-    : null;
-
-  // Add to cart with single restaurant enforcement
-  const addToCart = async (newItem: CartItem) => {
-    if (cart.length > 0 && String(cart[0].restaurantId) !== String(newItem.restaurantId)) {
-      const currentRest = restaurants.find((r) => String(r.id) === String(cart[0].restaurantId));
-      const newRest = restaurants.find((r) => String(r.id) === String(newItem.restaurantId));
-      setReplaceCartModal({
+  const cartRestaurant: Restaurant | null = useMemo(() => {
+    if (serverCart?.restaurant && serverCart.restaurant.id) {
+      const found = restaurants.find((r) => String(r.id) === String(serverCart.restaurant.id));
+      if (found) return found;
+      return {
+        id: String(serverCart.restaurant.id),
+        name: serverCart.restaurant.name || 'Restaurant',
+        slug: 'kitchen',
+        logo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=120',
+        coverImage: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600',
+        description: 'Fresh and authentic cuisine prepared by our top culinary partners.',
+        address: 'Downtown Food Hub',
+        city: selectedCity,
+        area: 'Central',
+        lat: 31.5204,
+        lng: 74.3587,
+        rating: 4.8,
+        reviewCount: 120,
+        deliveryFee: serverCart.restaurant.delivery_fee || settings.baseDeliveryFee,
+        minimumOrder: serverCart.restaurant.minimum_order || 0,
+        estimatedDeliveryTime: '25-35 min',
         isOpen: true,
-        pendingItem: newItem,
-        currentRestaurantName: currentRest?.name || 'Previous Restaurant',
-        newRestaurantName: newRest?.name || 'New Restaurant'
-      });
-      return;
+        status: 'approved' as const,
+        isFeatured: false,
+        commissionRate: 15,
+        commissionType: 'percentage' as const,
+        cuisines: ['All'],
+        phone: '+92 300 1234567',
+        email: 'kitchen@fastflow.com',
+        openingHours: {
+          all: { open: '09:00', close: '23:00' }
+        },
+        serviceRadiusKm: 10,
+      };
     }
+    return cart.length > 0 ? restaurants.find((r) => String(r.id) === String(cart[0].restaurantId)) || null : null;
+  }, [serverCart, restaurants, selectedCity, settings.baseDeliveryFee, cart]);
 
+  // Add to cart with server authority and single restaurant enforcement
+  const addToCart = async (newItem: CartItem) => {
     try {
-      await cartApi.addItem({
+      const res = await cartApi.addItem({
         product_id: newItem.productId,
         quantity: newItem.quantity,
         variant_id: newItem.selectedVariant?.id,
         selected_addons: newItem.selectedAddons.map(a => a.addonId),
         special_instructions: newItem.specialInstructions,
       });
+
+      if (res.data) {
+        syncCartState(res.data);
+        showToast(`Added ${newItem.quantity}x ${newItem.productName} to bag`, 'success');
+      }
     } catch (e: any) {
       if (e?.conflict) {
         setReplaceCartModal({
@@ -462,40 +546,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         return;
       }
+      showToast(e?.message || 'Failed to add dish to bag.', 'error');
     }
-
-    setCart((prev) => {
-      const existingIndex = prev.findIndex((item) => {
-        const sameProduct = String(item.productId) === String(newItem.productId);
-        const sameVariant = item.selectedVariant?.id === newItem.selectedVariant?.id;
-        const sameAddons = JSON.stringify(item.selectedAddons.map(a => a.addonId).sort()) === 
-                           JSON.stringify(newItem.selectedAddons.map(a => a.addonId).sort());
-        return sameProduct && sameVariant && sameAddons;
-      });
-
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        const existing = updated[existingIndex];
-        const newQty = existing.quantity + newItem.quantity;
-        const unitCost = existing.itemTotal / existing.quantity;
-        updated[existingIndex] = {
-          ...existing,
-          quantity: newQty,
-          itemTotal: unitCost * newQty
-        };
-        return updated;
-      }
-
-      return [...prev, newItem];
-    });
-
-    showToast(`Added ${newItem.quantity}x ${newItem.productName} to bag`, 'success');
   };
 
   const confirmReplaceCart = async () => {
     if (replaceCartModal.pendingItem) {
       try {
-        await cartApi.addItem({
+        const res = await cartApi.addItem({
           product_id: replaceCartModal.pendingItem.productId,
           quantity: replaceCartModal.pendingItem.quantity,
           variant_id: replaceCartModal.pendingItem.selectedVariant?.id,
@@ -503,11 +561,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           special_instructions: replaceCartModal.pendingItem.specialInstructions,
           replace_cart: true,
         });
-      } catch (e) {}
 
-      setCart([replaceCartModal.pendingItem]);
-      setAppliedCoupon(null);
-      showToast(`Bag replaced with items from ${replaceCartModal.newRestaurantName}`, 'info');
+        if (res.data) {
+          syncCartState(res.data);
+          setAppliedCoupon(null);
+          showToast(`Bag replaced with items from ${replaceCartModal.newRestaurantName}`, 'info');
+        }
+      } catch (e: any) {
+        showToast(e?.message || 'Failed to replace bag.', 'error');
+      }
     }
     setReplaceCartModal({ isOpen: false, pendingItem: null, currentRestaurantName: '', newRestaurantName: '' });
   };
@@ -523,118 +585,105 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      await cartApi.updateQuantity(itemId, quantity);
-    } catch (e) {}
-
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id === itemId) {
-          const unitCost = item.itemTotal / item.quantity;
-          return {
-            ...item,
-            quantity,
-            itemTotal: unitCost * quantity
-          };
-        }
-        return item;
-      })
-    );
+      const res = await cartApi.updateQuantity(itemId, quantity);
+      if (res.data) {
+        syncCartState(res.data);
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to update item quantity.', 'error');
+    }
   };
 
   const removeFromCart = async (itemId: string) => {
     try {
-      await cartApi.updateQuantity(itemId, 0);
-    } catch (e) {}
-
-    setCart((prev) => {
-      const remaining = prev.filter((i) => i.id !== itemId);
-      if (remaining.length === 0) {
-        setAppliedCoupon(null);
+      const res = await cartApi.updateQuantity(itemId, 0);
+      if (res.data) {
+        syncCartState(res.data);
       }
-      return remaining;
-    });
-    showToast('Item removed from bag', 'info');
+      showToast('Item removed from bag', 'info');
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to remove item from bag.', 'error');
+    }
   };
 
   const clearCart = async () => {
     try {
       await cartApi.clearCart();
-    } catch (e) {}
-    setCart([]);
-    setAppliedCoupon(null);
-    setRiderTip(0);
-  };
-
-  // Cart calculations
-  const calculateTotals = () => {
-    const subtotal = cart.reduce((sum, item) => sum + item.itemTotal, 0);
-    const deliveryFee = cartRestaurant ? cartRestaurant.deliveryFee : settings.baseDeliveryFee;
-    const tax = Math.round((subtotal * settings.taxPercentage) / 100);
-    const serviceFee = subtotal > 0 ? settings.serviceFee : 0;
-
-    let discount = 0;
-    if (appliedCoupon && subtotal >= appliedCoupon.minOrder) {
-      if (appliedCoupon.discountType === 'percentage') {
-        const calculated = Math.round((subtotal * appliedCoupon.discountValue) / 100);
-        discount = appliedCoupon.maxDiscount ? Math.min(calculated, appliedCoupon.maxDiscount) : calculated;
-      } else {
-        discount = appliedCoupon.discountValue;
-      }
+      syncCartState(null);
+      setAppliedCoupon(null);
+      setRiderTip(0);
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to clear bag.', 'error');
     }
-
-    const grandTotal = Math.max(0, subtotal - discount + deliveryFee + tax + serviceFee + riderTip);
-
-    return {
-      subtotal,
-      discount,
-      deliveryFee,
-      tax,
-      serviceFee,
-      tip: riderTip,
-      grandTotal
-    };
   };
 
-  const cartTotals = calculateTotals();
+  // Authoritative server cart totals
+  const cartTotals = serverCart ? {
+    subtotal: (serverCart.subtotal || 0),
+    discount: (serverCart.discount || 0),
+    deliveryFee: (serverCart.delivery_fee || 0),
+    tax: (serverCart.tax || 0),
+    serviceFee: (serverCart.service_fee || 0),
+    tip: (serverCart.tip || riderTip),
+    grandTotal: (serverCart.grand_total || 0),
+  } : {
+    subtotal: cart.reduce((sum, item) => sum + item.itemTotal, 0),
+    discount: 0,
+    deliveryFee: cartRestaurant ? cartRestaurant.deliveryFee : settings.baseDeliveryFee,
+    tax: Math.round((cart.reduce((sum, item) => sum + item.itemTotal, 0) * settings.taxPercentage) / 100),
+    serviceFee: cart.length > 0 ? settings.serviceFee : 0,
+    tip: riderTip,
+    grandTotal: Math.max(0, cart.reduce((sum, item) => sum + item.itemTotal, 0) + (cartRestaurant ? cartRestaurant.deliveryFee : settings.baseDeliveryFee) + Math.round((cart.reduce((sum, item) => sum + item.itemTotal, 0) * settings.taxPercentage) / 100) + (cart.length > 0 ? settings.serviceFee : 0) + riderTip)
+  };
 
-  // Coupon logic calling server validation
+  // Authoritative Server Coupon Application
   const applyCoupon = async (code: string) => {
     const cleanCode = code.trim().toUpperCase();
 
     try {
-      const res = await couponApi.validate(cleanCode, cartTotals.subtotal, cartRestaurant?.id);
-      if (res.data?.coupon) {
-        setAppliedCoupon(res.data.coupon);
-        return { success: true, message: `Voucher ${res.data.coupon.code} applied successfully!` };
+      const res = await cartApi.applyCoupon(cleanCode);
+      if (res.data) {
+        syncCartState(res.data);
+        const applied = coupons.find(c => c.code.toUpperCase() === cleanCode) || {
+          id: `coup-${cleanCode}`,
+          code: cleanCode,
+          discountType: 'percentage' as const,
+          discountValue: 0,
+          minOrder: 0,
+          validFrom: '',
+          validUntil: '',
+          usageLimit: 100,
+          timesUsed: 0,
+          isActive: true,
+          description: 'Applied Voucher'
+        };
+        setAppliedCoupon(applied);
+        return { success: true, message: `Voucher '${cleanCode}' applied successfully!` };
       }
     } catch (e: any) {
-      return { success: false, message: e.message || 'Invalid or expired promotional coupon code.' };
+      return { success: false, message: e.message || 'Invalid or expired promotional voucher code.' };
     }
 
-    // Local fallback
-    const found = coupons.find((c) => c.code.toUpperCase() === cleanCode && c.isActive);
-    if (!found) {
-      return { success: false, message: 'Invalid or expired promotional coupon code.' };
-    }
-    if (cartTotals.subtotal < found.minOrder) {
-      return { 
-        success: false, 
-        message: `Order subtotal must be at least ${settings.currencySymbol} ${found.minOrder.toLocaleString()} for this voucher.` 
-      };
-    }
-    setAppliedCoupon(found);
-    return { success: true, message: `Voucher ${found.code} applied successfully!` };
+    return { success: false, message: 'Invalid or expired promotional voucher code.' };
   };
 
-  const removeCoupon = () => {
-    setAppliedCoupon(null);
-    showToast('Voucher removed', 'info');
+  const removeCoupon = async () => {
+    try {
+      const res = await cartApi.removeCoupon();
+      if (res.data) {
+        syncCartState(res.data);
+      }
+      setAppliedCoupon(null);
+      showToast('Voucher removed', 'info');
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to remove voucher.', 'error');
+    }
   };
 
-  // Order placement via OrderService / API
+  // Order placement via Server Authoritative OrderService / API
   const placeOrder = async (paymentMethod: PaymentMethod, instructions?: string): Promise<Order> => {
     if (cart.length === 0 || !cartRestaurant) {
-      throw new Error('Bag is empty');
+      throw new Error('Bag is empty. Please add items before checking out.');
     }
 
     if (!currentUser) {
@@ -642,36 +691,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Please sign in to complete your order.');
     }
 
-    const addr: Address = currentAddress || {
-      id: 'default-addr',
-      label: 'Other' as const,
-      street: `${selectedArea}, ${selectedCity}`,
-      area: selectedArea,
-      city: selectedCity,
-      lat: 31.5204,
-      lng: 74.3587,
-      deliveryInstructions: instructions || '',
-      isDefault: true
-    };
+    if (!currentAddress) {
+      throw new Error('Please select or add a delivery address to proceed.');
+    }
 
     const payload = {
       restaurant_id: cartRestaurant.id,
       delivery_address: {
-        street: addr.street,
-        area: addr.area,
-        city: addr.city,
+        street: currentAddress.street,
+        area: currentAddress.area,
+        city: currentAddress.city,
       },
-      delivery_instructions: instructions || addr.deliveryInstructions,
+      delivery_instructions: instructions || currentAddress.deliveryInstructions || '',
       payment_method: paymentMethod,
       coupon_code: appliedCoupon?.code,
       tip: cartTotals.tip,
-      items: cart.map((ci) => ({
-        product_id: ci.productId,
-        quantity: ci.quantity,
-        variant_id: ci.selectedVariant?.id,
-        addons: ci.selectedAddons.map(a => a.addonId),
-        special_instructions: ci.specialInstructions,
-      })),
     };
 
     const apiRes = await orderApi.checkout(payload as any);
@@ -683,36 +717,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrders((prev) => [createdOrder, ...prev]);
     setActiveOrder(createdOrder);
 
-    // Record immutable financial transaction
-    const commRate = cartRestaurant.commissionRate || settings.defaultCommissionRate;
-    const platformCommission = Math.round((createdOrder.subtotal * commRate) / 100);
-    const restaurantPayout = Math.max(0, createdOrder.subtotal - platformCommission);
+    // Synchronize cleared server cart
+    syncCartState(null);
+    setAppliedCoupon(null);
+    setRiderTip(0);
 
-    const newTransaction: FinancialTransaction = {
-      id: `fin-${Date.now()}`,
-      orderId: createdOrder.id,
-      orderNumber: createdOrder.orderNumber,
-      restaurantId: cartRestaurant.id,
-      restaurantName: cartRestaurant.name,
-      grossAmount: createdOrder.grandTotal,
-      platformCommission,
-      restaurantPayout,
-      deliveryFee: createdOrder.deliveryFee,
-      riderPayout: 100 + createdOrder.tip,
-      paymentGatewayFee: paymentMethod === 'stripe' ? Math.round(createdOrder.grandTotal * 0.025) : 0,
-      status: paymentMethod === 'stripe' ? 'settled' : 'pending',
-      createdAt: new Date().toISOString()
-    };
-    setFinancials((prev) => [newTransaction, ...prev]);
-
-    logAuditAction('order.create', 'Orders', createdOrder.id, `Created order ${createdOrder.orderNumber} for ${cartRestaurant.name}`);
-
-    // Auto dispatch rider in background
-    setTimeout(() => {
-      autoDispatchRider(createdOrder.id);
-    }, 1500);
-
-    clearCart();
     return createdOrder;
   };
 
