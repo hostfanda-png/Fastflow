@@ -18,7 +18,7 @@ class RegisterRequest extends FormRequest
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8'],
             'phone' => ['required', 'string', 'max:30'],
-            'role' => ['nullable', 'string', 'in:customer,restaurant_owner,delivery_rider'],
+            'role' => ['nullable', 'string', 'in:customer,restaurant_owner'],
         ];
     }
 }
