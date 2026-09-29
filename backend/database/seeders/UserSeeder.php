@@ -21,7 +21,7 @@ class UserSeeder extends Seeder
 
         // 1. Super Admin (DEMO)
         User::firstOrCreate(
-            ['email' => 'admin@dineflow.app'],
+            ['email' => 'admin@fastflow.app'],
             [
                 'name' => 'Eleanor Vance (DEMO Admin)',
                 'password' => Hash::make('demo_password_123'),
@@ -60,9 +60,9 @@ class UserSeeder extends Seeder
 
         // 4. Riders (DEMO - 3 Riders)
         $ridersData = [
-            ['email' => 'rider1@dineflow.app', 'name' => 'Tariq Mansoor (DEMO Rider 1)', 'phone' => '+92 312 9988776'],
-            ['email' => 'rider2@dineflow.app', 'name' => 'Bilal Ahmed (DEMO Rider 2)', 'phone' => '+92 322 1122334'],
-            ['email' => 'rider3@dineflow.app', 'name' => 'Hamza Farooq (DEMO Rider 3)', 'phone' => '+92 334 7788990'],
+            ['email' => 'rider1@fastflow.app', 'name' => 'Tariq Mansoor (DEMO Rider 1)', 'phone' => '+92 312 9988776'],
+            ['email' => 'rider2@fastflow.app', 'name' => 'Bilal Ahmed (DEMO Rider 2)', 'phone' => '+92 322 1122334'],
+            ['email' => 'rider3@fastflow.app', 'name' => 'Hamza Farooq (DEMO Rider 3)', 'phone' => '+92 334 7788990'],
         ];
 
         foreach ($ridersData as $rd) {
@@ -80,7 +80,7 @@ class UserSeeder extends Seeder
 
         // 5. Customers (DEMO - 10 Customers)
         $primaryCustomer = User::firstOrCreate(
-            ['email' => 'customer@dineflow.app'],
+            ['email' => 'customer@fastflow.app'],
             [
                 'name' => 'Sarah Jenkins (DEMO Customer)',
                 'password' => Hash::make('demo_password_123'),
@@ -108,9 +108,9 @@ class UserSeeder extends Seeder
 
         for ($i = 2; $i <= 10; $i++) {
             $cust = User::firstOrCreate(
-                ['email' => "customer{$i}@dineflow.app"],
+                ['email' => "customer{$i}@fastflow.app"],
                 [
-                    'name' => "DineFlow Customer {$i} (DEMO)",
+                    'name' => "Fastflow Customer {$i} (DEMO)",
                     'password' => Hash::make('demo_password_123'),
                     'phone' => "+92 300 555000{$i}",
                     'role_id' => $customerRole->id,

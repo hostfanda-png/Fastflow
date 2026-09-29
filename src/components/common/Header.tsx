@@ -32,11 +32,15 @@ export const Header: React.FC<HeaderProps> = ({
     setSelectedArea,
     formatCurrency,
     cartTotals,
-    t
+    t,
+    isLoggedIn,
+    openAuthModal,
+    logout
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [locationDropdownOpen, setLocationDropdownOpen] = useState(false);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -59,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="text-left group flex items-center gap-2"
             >
               <span className="text-2xl font-bold tracking-tight text-stone-900 group-hover:text-amber-600 transition-colors">
-                DineFlow
+                Fastflow
               </span>
             </button>
 
@@ -154,33 +158,87 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {/* Profile Avatar / Portal Button */}
-            <button
-              onClick={() => {
-                if (currentUser.role === 'customer') {
-                  setActiveView('profile');
-                } else if (currentUser.role === 'restaurant_owner' || currentUser.role === 'restaurant_staff') {
-                  setActiveView('restaurant_portal');
-                } else if (currentUser.role === 'delivery_rider') {
-                  setActiveView('rider_portal');
-                } else if (currentUser.role === 'super_admin') {
-                  setActiveView('admin_portal');
-                }
-              }}
-              className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 border border-stone-200 hover:border-stone-300 rounded-lg text-xs font-medium text-stone-800 bg-white hover:bg-stone-50 transition-colors"
-            >
-              {currentUser.avatar ? (
-                <img 
-                  src={currentUser.avatar} 
-                  alt={currentUser.name} 
-                  className="w-6 h-6 rounded-full object-cover shrink-0" 
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <UserIcon className="w-4 h-4 text-stone-500 shrink-0" />
+            {/* Profile / Auth Button */}
+            <div className="relative">
+              <button
+                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 border border-stone-200 hover:border-stone-300 rounded-lg text-xs font-medium text-stone-800 bg-white hover:bg-stone-50 transition-colors"
+              >
+                {currentUser.avatar ? (
+                  <img 
+                    src={currentUser.avatar} 
+                    alt={currentUser.name} 
+                    className="w-6 h-6 rounded-full object-cover shrink-0" 
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <UserIcon className="w-4 h-4 text-stone-500 shrink-0" />
+                )}
+                <span className="hidden sm:inline truncate max-w-[100px]">{currentUser.name.split(' ')[0]}</span>
+                <ChevronDown className="w-3 h-3 text-stone-400" />
+              </button>
+
+              {profileDropdownOpen && (
+                <div className="absolute right-0 mt-1.5 w-56 bg-white border border-stone-200 rounded-2xl shadow-xl p-2 z-50 animate-fade-in">
+                  <div className="px-3 py-2 border-b border-stone-100">
+                    <p className="text-xs font-bold text-stone-900 truncate">{currentUser.name}</p>
+                    <p className="text-[11px] text-stone-500 font-mono truncate">{currentUser.email}</p>
+                    <span className="inline-block mt-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                      {currentUser.role.replace('_', ' ')}
+                    </span>
+                  </div>
+
+                  <div className="py-1 space-y-0.5">
+                    <button
+                      onClick={() => {
+                        if (currentUser.role === 'customer') setActiveView('profile');
+                        else if (currentUser.role === 'restaurant_owner' || currentUser.role === 'restaurant_staff') setActiveView('restaurant_portal');
+                        else if (currentUser.role === 'delivery_rider') setActiveView('rider_portal');
+                        else if (currentUser.role === 'super_admin') setActiveView('admin_portal');
+                        setProfileDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors"
+                    >
+                      {currentUser.role === 'customer' ? 'Customer Profile & Addresses' : 'Open Workspace Portal'}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveView('orders');
+                        setProfileDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors"
+                    >
+                      My Orders
+                    </button>
+                  </div>
+
+                  <div className="pt-1 border-t border-stone-100">
+                    {isLoggedIn ? (
+                      <button
+                        onClick={() => {
+                          logout();
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                      >
+                        Sign Out
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          openAuthModal('login');
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-amber-600 hover:bg-amber-50 rounded-xl transition-colors"
+                      >
+                        Sign In / Register
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
-              <span className="hidden sm:inline truncate max-w-[100px]">{currentUser.name.split(' ')[0]}</span>
-            </button>
+            </div>
 
             {/* Mobile Hamburger */}
             <button 
@@ -229,7 +287,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => { setActiveView('about-us'); setMobileMenuOpen(false); }}
             className="block w-full text-left py-2 text-sm font-medium text-stone-800"
           >
-            About DineFlow
+            About Fastflow
           </button>
           <button 
             onClick={() => { setActiveView('faq'); setMobileMenuOpen(false); }}

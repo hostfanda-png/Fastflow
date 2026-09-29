@@ -14,6 +14,7 @@ import { OrderTracker } from './components/customer/OrderTracker';
 import { CustomerOrders } from './components/customer/CustomerOrders';
 import { CustomerProfile } from './components/customer/CustomerProfile';
 import { CMSModal } from './components/customer/CMSModal';
+import { AuthModal } from './components/common/AuthModal';
 import { RestaurantDashboard } from './components/restaurant/RestaurantDashboard';
 import { RiderDashboard } from './components/rider/RiderDashboard';
 import { AdminDashboard } from './components/admin/AdminDashboard';
@@ -45,7 +46,10 @@ const MainApp: React.FC = () => {
     formatCurrency,
     isLoading,
     apiError,
-    refreshData 
+    refreshData,
+    isAuthModalOpen,
+    closeAuthModal,
+    authModalMode
   } = useApp();
 
   const [activeView, setActiveView] = useState<string>('storefront');
@@ -239,7 +243,7 @@ const MainApp: React.FC = () => {
                   Engineered For Freshness
                 </span>
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight mt-1">
-                  How DineFlow Delivers
+                  How Fastflow Delivers
                 </h2>
                 <p className="text-xs sm:text-sm text-stone-500 mt-2">
                   A synchronous multi-vendor infrastructure ensuring zero condensation and maximum culinary fidelity.
@@ -433,6 +437,13 @@ const MainApp: React.FC = () => {
           onClose={() => setActiveCMSPage(null)}
         />
       )}
+
+      {/* Authentication & Registration Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={closeAuthModal}
+        initialMode={authModalMode}
+      />
 
       {/* Footer */}
       <Footer

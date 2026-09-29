@@ -1,7 +1,7 @@
 {
     "name": "fastflow/fastflow-backend",
     "type": "project",
-    "description": "DineFlow Multi-Vendor Restaurant Ordering Platform Laravel REST API",
+    "description": "Fastflow Multi-Vendor Restaurant Ordering Platform Laravel REST API",
     "keywords": ["food-delivery", "marketplace", "laravel", "multi-vendor"],
     "license": "Commercial",
     "require": {

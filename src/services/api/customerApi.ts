@@ -35,7 +35,11 @@ export const customerApi = {
     return apiClient.post<Address>('/customer/addresses', address);
   },
 
-  deleteAddress: async (addressId: string): Promise<ApiResponse<null>> => {
+  updateAddress: async (addressId: string | number, address: Partial<Address>): Promise<ApiResponse<Address>> => {
+    return apiClient.put<Address>(`/customer/addresses/${addressId}`, address);
+  },
+
+  deleteAddress: async (addressId: string | number): Promise<ApiResponse<null>> => {
     return apiClient.delete<null>(`/customer/addresses/${addressId}`);
   },
 };

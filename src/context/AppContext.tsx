@@ -46,6 +46,7 @@ import { riderApi } from '../services/api/riderApi';
 import { reviewApi } from '../services/api/reviewApi';
 import { couponApi } from '../services/api/couponApi';
 import { adminApi } from '../services/api/adminApi';
+import { customerApi } from '../services/api/customerApi';
 
 interface Toast {
   id: string;
@@ -69,9 +70,19 @@ interface AppContextType {
   // Current user & authentication
   currentUser: User;
   setCurrentUser: (user: User) => void;
+  isLoggedIn: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (userData: { name: string; email: string; password: string; phone: string; role?: string }) => Promise<void>;
+  logout: () => Promise<void>;
   switchRole: (roleName: string) => Promise<void>;
   hasPermission: (permission: Permission) => boolean;
   demoUsers: User[];
+
+  // Auth Modal State
+  isAuthModalOpen: boolean;
+  authModalMode: 'login' | 'register';
+  openAuthModal: (mode?: 'login' | 'register') => void;
+  closeAuthModal: () => void;
 
   // Restaurants & Menu
   restaurants: Restaurant[];
@@ -175,8 +186,132 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  // Current active user
+  // Current active user & Auth state
   const [currentUser, setCurrentUser] = useState<User>(() => DEMO_USERS[4]);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && Boolean(localStorage.getItem('fastflow_auth_token'));
+  });
+
+  // Auth modal state
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+
+  const openAuthModal = (mode: 'login' | 'register' = 'login') => {
+    setAuthModalMode(mode);
+    setIsAuthModalOpen(true);
+  };
+
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+  };
+
+  // Real Sanctum Auth Methods
+  const login = async (email: string, password: string) => {
+    setIsLoading(true);
+    setApiError(null);
+    try {
+      const res = await authApi.login(email, password);
+      if (res.data?.user) {
+        const u = res.data.user;
+        const mappedUser: User = {
+          id: String(u.id),
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '',
+          avatar: u.avatar || '',
+          role: u.role as any,
+          permissions: (u.permissions || []) as any[],
+          restaurantId: u.restaurant_id ? String(u.restaurant_id) : undefined,
+        };
+        setCurrentUser(mappedUser);
+        setIsLoggedIn(true);
+        showToast(`Welcome back, ${u.name}!`, 'success');
+      }
+    } catch (err: any) {
+      const msg = err.message || 'Login failed. Please check credentials.';
+      showToast(msg, 'error');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const register = async (userData: { name: string; email: string; password: string; phone: string; role?: string }) => {
+    setIsLoading(true);
+    setApiError(null);
+    try {
+      const res = await authApi.register(userData);
+      if (res.data?.user) {
+        const u = res.data.user;
+        const mappedUser: User = {
+          id: String(u.id),
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '',
+          avatar: u.avatar || '',
+          role: u.role as any,
+          permissions: (u.permissions || []) as any[],
+          restaurantId: u.restaurant_id ? String(u.restaurant_id) : undefined,
+        };
+        setCurrentUser(mappedUser);
+        setIsLoggedIn(true);
+      }
+    } catch (err: any) {
+      const msg = err.message || 'Registration failed.';
+      showToast(msg, 'error');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch (e) {
+      // Ignore network errors on logout
+    } finally {
+      setIsLoggedIn(false);
+      setCurrentUser(DEMO_USERS[4]);
+      showToast('Logged out successfully', 'info');
+    }
+  };
+
+  // Check auth session on startup
+  useEffect(() => {
+    const token = localStorage.getItem('fastflow_auth_token');
+    if (token) {
+      authApi.me()
+        .then((res) => {
+          if (res.data) {
+            const u = res.data;
+            setCurrentUser({
+              id: String(u.id),
+              name: u.name,
+              email: u.email,
+              phone: u.phone || '',
+              avatar: u.avatar || '',
+              role: u.role as any,
+              permissions: (u.permissions || []) as any[],
+              restaurantId: u.restaurant_id ? String(u.restaurant_id) : undefined,
+            });
+            setIsLoggedIn(true);
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('fastflow_auth_token');
+          setIsLoggedIn(false);
+        });
+    }
+
+    const handleUnauthorized = () => {
+      setIsLoggedIn(false);
+      showToast('Session expired. Please sign in again.', 'error');
+    };
+
+    window.addEventListener('fastflow:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('fastflow:unauthorized', handleUnauthorized);
+  }, []);
 
   const [restaurants, setRestaurants] = useState<Restaurant[]>(SEED_RESTAURANTS);
   const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
@@ -1039,6 +1174,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         currentUser,
         setCurrentUser,
+        isLoggedIn,
+        login,
+        register,
+        logout,
+        isAuthModalOpen,
+        authModalMode,
+        openAuthModal,
+        closeAuthModal,
         switchRole,
         hasPermission,
         demoUsers: DEMO_USERS,

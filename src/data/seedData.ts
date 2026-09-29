@@ -849,26 +849,26 @@ export const SEED_BANNERS: Banner[] = [
 export const SEED_CMS_PAGES: CMSPage[] = [
   {
     slug: 'about-us',
-    title: 'About DineFlow Marketplace',
-    content: 'DineFlow is an enterprise-grade multi-vendor food delivery infrastructure connecting top independent culinary artisans, wood-fired pizzerias, smash burger joints, and sushi houses with discerning diners. Our real-time dispatch network empowers local restaurateurs with transparent commission tiers, dedicated staff consoles, and swift contactless deliveries.',
+    title: 'About Fastflow Marketplace',
+    content: 'Fastflow is an enterprise-grade multi-vendor food delivery infrastructure connecting top independent culinary artisans, wood-fired pizzerias, smash burger joints, and sushi houses with discerning diners. Our real-time dispatch network empowers local restaurateurs with transparent commission tiers, dedicated staff consoles, and swift contactless deliveries.',
     lastUpdated: 'September 2026'
   },
   {
     slug: 'faq',
     title: 'Frequently Asked Questions',
-    content: 'Q: How does DineFlow handle delivery from multiple restaurants?\nA: To guarantee peak freshness, each active cart is tied to a single kitchen. If you select items from a new venue, our system prompts you to complete or replace your current cart.\n\nQ: What payment methods are supported?\nA: DineFlow supports Cash on Delivery (COD) as well as secure online credit/debit card processing via Stripe interface abstraction.\n\nQ: How can I register my restaurant?\nA: Submit an application through the partner portal. Our culinary verification team reviews food safety licenses and menus within 24-48 business hours.',
+    content: 'Q: How does Fastflow handle delivery from multiple restaurants?\nA: To guarantee peak freshness, each active cart is tied to a single kitchen. If you select items from a new venue, our system prompts you to complete or replace your current cart.\n\nQ: What payment methods are supported?\nA: Fastflow supports Cash on Delivery (COD) as well as secure online credit/debit card processing via Stripe interface abstraction.\n\nQ: How can I register my restaurant?\nA: Submit an application through the partner portal. Our culinary verification team reviews food safety licenses and menus within 24-48 business hours.',
     lastUpdated: 'September 2026'
   },
   {
     slug: 'terms',
     title: 'Terms of Service',
-    content: 'By accessing the DineFlow platform, you agree to comply with our fair marketplace policies. Orders are binding once confirmed by partner kitchens. Food preparation standards, ingredient sourcing, and allergen notifications remain the direct operational responsibility of participating restaurants. DineFlow enforces secure end-to-end data encryption and strict RBAC authorization.',
+    content: 'By accessing the Fastflow platform, you agree to comply with our fair marketplace policies. Orders are binding once confirmed by partner kitchens. Food preparation standards, ingredient sourcing, and allergen notifications remain the direct operational responsibility of participating restaurants. Fastflow enforces secure end-to-end data encryption and strict RBAC authorization.',
     lastUpdated: 'September 2026'
   },
   {
     slug: 'privacy',
     title: 'Privacy Policy',
-    content: 'DineFlow is committed to customer data security. We collect customer delivery coordinates solely for routing deliveries and verifying service zones. Sensitive payment credentials never touch our core database servers and are tokenized via certified PCI-compliant gateway abstractions. We never sell customer information to third-party ad networks.',
+    content: 'Fastflow is committed to customer data security. We collect customer delivery coordinates solely for routing deliveries and verifying service zones. Sensitive payment credentials never touch our core database servers and are tokenized via certified PCI-compliant gateway abstractions. We never sell customer information to third-party ad networks.',
     lastUpdated: 'September 2026'
   },
   {
@@ -880,7 +880,7 @@ export const SEED_CMS_PAGES: CMSPage[] = [
 ];
 
 export const SEED_SETTINGS: SystemSettings = {
-  appName: 'DineFlow',
+  appName: 'Fastflow',
   currencyCode: 'PKR',
   currencySymbol: 'Rs.',
   decimalPlaces: 0,

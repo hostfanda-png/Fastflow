@@ -1,5 +1,5 @@
 /**
- * Centralized API Client for DineFlow Frontend.
+ * Centralized API Client for Fastflow Frontend.
  * Interacts with Laravel REST API endpoints (/api/v1/*).
  */
 
@@ -21,15 +21,15 @@ class ApiClient {
   }
 
   private getToken(): string | null {
-    return localStorage.getItem('dineflow_auth_token');
+    return localStorage.getItem('fastflow_auth_token');
   }
 
   public setToken(token: string): void {
-    localStorage.setItem('dineflow_auth_token', token);
+    localStorage.setItem('fastflow_auth_token', token);
   }
 
   public clearToken(): void {
-    localStorage.removeItem('dineflow_auth_token');
+    localStorage.removeItem('fastflow_auth_token');
   }
 
   public async request<T = any>(
@@ -58,17 +58,24 @@ class ApiClient {
       const json = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('fastflow:unauthorized'));
+          }
+        }
         const errorMsg = json?.message || `HTTP Error ${response.status}: ${response.statusText}`;
-        const error = new Error(errorMsg) as Error & { status?: number; errors?: any; conflict?: boolean };
+        const error = new Error(errorMsg) as Error & { status?: number; errors?: any; conflict?: boolean; current_restaurant?: any; new_restaurant?: any };
         error.status = response.status;
         error.errors = json?.errors;
         error.conflict = json?.conflict;
+        error.current_restaurant = json?.current_restaurant;
+        error.new_restaurant = json?.new_restaurant;
         throw error;
       }
 
       return json as ApiResponse<T>;
     } catch (err: any) {
-      // If network fails (e.g. standalone backend not running on port), we provide a fallback message
       if (!err.status) {
         console.warn(`[ApiClient] Network request to ${url} failed.`, err.message);
       }

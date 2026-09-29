@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\RestaurantController;
 use App\Http\Controllers\Api\V1\OwnerRestaurantController;
 use App\Http\Controllers\Api\V1\MenuController;
@@ -48,6 +49,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [OrderController::class, 'index']);
             Route::get('{order}', [OrderController::class, 'show']);
             Route::post('{order}/cancel', [OrderController::class, 'cancel']);
+        });
+
+        // Customer Profile & Address Management
+        Route::prefix('customer')->group(function () {
+            Route::get('profile', [CustomerController::class, 'getProfile']);
+            Route::put('profile', [CustomerController::class, 'updateProfile']);
+            Route::get('addresses', [CustomerController::class, 'getAddresses']);
+            Route::post('addresses', [CustomerController::class, 'storeAddress']);
+            Route::put('addresses/{id}', [CustomerController::class, 'updateAddress']);
+            Route::delete('addresses/{id}', [CustomerController::class, 'deleteAddress']);
         });
 
         // Reviews

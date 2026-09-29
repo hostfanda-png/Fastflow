@@ -5,7 +5,7 @@ use Illuminate\Support\ServiceProvider;
 
 return [
 
-    'name' => env('APP_NAME', 'DineFlow Marketplace'),
+    'name' => env('APP_NAME', 'Fastflow'),
 
     'env' => env('APP_ENV', 'production'),
 

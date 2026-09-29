@@ -56,7 +56,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenCMS, setActiveView }) => {
         {/* Links Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 py-12">
           <div>
-            <span className="text-lg font-bold text-white tracking-tight">DineFlow</span>
+            <span className="text-lg font-bold text-white tracking-tight">Fastflow</span>
             <p className="mt-2 text-xs text-stone-400 leading-relaxed">
               The next-generation multi-vendor culinary delivery network connecting local kitchens, riders, and hungry diners.
             </p>
@@ -169,7 +169,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenCMS, setActiveView }) => {
 
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-stone-800 flex flex-col sm:flex-row items-center justify-between text-xs text-stone-500 gap-4">
-          <p>© 2026 DineFlow Technologies Inc. All rights reserved. Original software architecture suitable for CodeCanyon commercial deployment.</p>
+          <p>© 2026 Fastflow Technologies. All rights reserved. Commercial multi-vendor food delivery platform.</p>
           <div className="flex items-center gap-4">
             <span className="font-mono text-[11px] text-stone-400">Server Status: Nominal</span>
             <span>·</span>

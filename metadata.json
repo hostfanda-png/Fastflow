@@ -1,6 +1,6 @@
 {
-  "name": "DineFlow – Multi-Vendor Food Delivery Marketplace",
-  "description": "Production-grade multi-vendor food delivery and restaurant ordering platform featuring customer storefront, restaurant management portal, delivery rider console, and super admin governance.",
+  "name": "Fastflow – Multi-Vendor Food Delivery Marketplace",
+  "description": "Production-grade multi-vendor food delivery marketplace featuring customer storefront, restaurant management portal, delivery rider console, and super admin governance.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
