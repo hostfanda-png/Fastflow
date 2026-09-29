@@ -26,7 +26,12 @@ class OrderController extends Controller
         $user = $request->user();
 
         try {
-            $order = $this->orderService->createOrder($user, $request->validated());
+            $data = $request->validated();
+            if (empty($data['idempotency_key'])) {
+                $data['idempotency_key'] = $request->header('X-Idempotency-Key') ?? $request->header('Idempotency-Key');
+            }
+
+            $order = $this->orderService->createOrder($user, $data);
 
             // Clear server cart if order successful
             $cart = Cart::where('user_id', $user->id)->first();

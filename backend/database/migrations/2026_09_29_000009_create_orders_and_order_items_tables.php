@@ -11,6 +11,7 @@ return new class extends Migration
         Schema::create('orders', function (Blueprint $table) {
             $table->id();
             $table->string('order_number')->unique()->index();
+            $table->string('idempotency_key')->nullable()->unique()->index();
             $table->foreignId('customer_id')->constrained('users');
             $table->foreignId('restaurant_id')->constrained('restaurants');
             $table->foreignId('rider_id')->nullable()->constrained('riders')->nullOnDelete();

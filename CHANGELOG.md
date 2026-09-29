@@ -4,6 +4,15 @@ All notable changes to the Fastflow Marketplace project will be documented in th
 
 ---
 
+## [1.1.0] - 2026-09-29
+
+### Security & Hardening (Phase 1 Final Completion)
+- **Authoritative Checkout Idempotency**: Added database-backed `idempotency_key` with automatic deduplication for checkout requests and double-click prevention.
+- **Strict Cart Validation**: Enforced rejection of mismatched variants, invalid addons, or sold-out dishes across all cart and order flows.
+- **Privilege Escalation Closure**: Hardened `AuthController` to prevent unauthorized role assignment during registration.
+- **Sanctum Production Session Flow**: Cleared all demo user auto-login fallbacks and unified auth state with real `/api/v1/auth/me` endpoints.
+- **Stripe Webhook & Payment Safeguards**: Strictly enforced `pending` status initialization for online transactions pending webhook signature verification.
+
 ## [1.0.0] - 2026-09-29
 
 ### Added

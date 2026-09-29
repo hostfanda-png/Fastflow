@@ -129,4 +129,107 @@ class CartCheckoutTest extends TestCase
         $conflictResponse->assertStatus(409)
             ->assertJsonPath('conflict', true);
     }
+
+    public function test_checkout_double_click_protection_with_idempotency_key(): void
+    {
+        $customerRole = Role::firstOrCreate(['name' => 'customer'], ['display_name' => 'Customer']);
+        $ownerRole = Role::firstOrCreate(['name' => 'restaurant_owner'], ['display_name' => 'Owner']);
+
+        $customer = User::factory()->create(['role_id' => $customerRole->id]);
+        $owner = User::factory()->create(['role_id' => $ownerRole->id]);
+
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Fast Grill',
+            'slug' => 'fast-grill',
+            'address' => 'Mall Road',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'delivery_fee' => 100.00,
+            'minimum_order' => 100.00,
+            'status' => 'approved',
+            'is_open' => true,
+        ]);
+
+        $category = Category::create(['name' => 'Burgers', 'slug' => 'burgers']);
+        $product = Product::create([
+            'restaurant_id' => $restaurant->id,
+            'category_id' => $category->id,
+            'name' => 'Beef Burger',
+            'slug' => 'beef-burger',
+            'price' => 800.00,
+            'is_available' => true,
+        ]);
+
+        $payload = [
+            'idempotency_key' => 'idemp_key_unique_test_123',
+            'restaurant_id' => $restaurant->id,
+            'delivery_address' => [
+                'street' => 'Street 5',
+                'area' => 'Gulberg',
+                'city' => 'Lahore',
+            ],
+            'payment_method' => 'cod',
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                ],
+            ],
+        ];
+
+        // First request
+        $res1 = $this->actingAs($customer, 'sanctum')->postJson('/api/v1/orders/checkout', $payload);
+        $res1->assertStatus(201);
+        $order1 = $res1->json('data');
+
+        // Immediate duplicate request with same idempotency key
+        $res2 = $this->actingAs($customer, 'sanctum')->postJson('/api/v1/orders/checkout', $payload);
+        $res2->assertStatus(201);
+        $order2 = $res2->json('data');
+
+        $this->assertEquals($order1['id'], $order2['id']);
+        $this->assertEquals($order1['order_number'], $order2['order_number']);
+    }
+
+    public function test_customer_cannot_view_another_customer_order(): void
+    {
+        $customerRole = Role::firstOrCreate(['name' => 'customer'], ['display_name' => 'Customer']);
+        $ownerRole = Role::firstOrCreate(['name' => 'restaurant_owner'], ['display_name' => 'Owner']);
+
+        $customerA = User::factory()->create(['role_id' => $customerRole->id]);
+        $customerB = User::factory()->create(['role_id' => $customerRole->id]);
+        $owner = User::factory()->create(['role_id' => $ownerRole->id]);
+
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Rest X',
+            'slug' => 'rest-x',
+            'address' => 'X',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+            'is_open' => true,
+        ]);
+
+        $category = Category::create(['name' => 'Meals', 'slug' => 'meals']);
+        $product = Product::create(['restaurant_id' => $restaurant->id, 'category_id' => $category->id, 'name' => 'Meal X', 'slug' => 'meal-x', 'price' => 600, 'is_available' => true]);
+
+        // Customer A places an order
+        $res = $this->actingAs($customerA, 'sanctum')->postJson('/api/v1/orders/checkout', [
+            'restaurant_id' => $restaurant->id,
+            'delivery_address' => ['street' => 'Street A', 'area' => 'Gulberg', 'city' => 'Lahore'],
+            'payment_method' => 'cod',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ]);
+        $order = $res->json('data');
+
+        // Customer B attempts to view Customer A's order
+        $intruderRes = $this->actingAs($customerB, 'sanctum')->getJson("/api/v1/orders/{$order['id']}");
+        $intruderRes->assertStatus(403);
+    }
 }

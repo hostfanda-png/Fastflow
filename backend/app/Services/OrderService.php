@@ -29,6 +29,17 @@ class OrderService
     public function createOrder(User $customer, array $data): Order
     {
         return DB::transaction(function () use ($customer, $data) {
+            // Double checkout / Idempotency protection
+            $idempotencyKey = $data['idempotency_key'] ?? null;
+            if (!empty($idempotencyKey)) {
+                $existing = Order::where('idempotency_key', $idempotencyKey)
+                    ->where('customer_id', $customer->id)
+                    ->first();
+                if ($existing) {
+                    return $existing->load(['items.addons', 'restaurant']);
+                }
+            }
+
             $restaurantId = $data['restaurant_id'];
             $restaurant = Restaurant::findOrFail($restaurantId);
 
@@ -198,6 +209,7 @@ class OrderService
 
             $order = Order::create([
                 'order_number' => $orderNumber,
+                'idempotency_key' => $idempotencyKey,
                 'customer_id' => $customer->id,
                 'restaurant_id' => $restaurant->id,
                 'rider_id' => null,

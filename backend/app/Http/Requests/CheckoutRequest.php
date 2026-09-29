@@ -14,6 +14,7 @@ class CheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'idempotency_key' => ['nullable', 'string', 'max:255'],
             'restaurant_id' => ['required', 'exists:restaurants,id'],
             'delivery_address' => ['required', 'array'],
             'delivery_address.street' => ['required', 'string'],
