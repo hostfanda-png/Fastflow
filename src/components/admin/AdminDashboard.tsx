@@ -47,12 +47,33 @@ export const AdminDashboard: React.FC = () => {
     updateDeliveryZone, 
     cmsPages, 
     updateCMSPage, 
-    formatCurrency 
+    formatCurrency,
+    openAuthModal
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
     'analytics' | 'restaurants' | 'riders' | 'orders' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings'
   >('analytics');
+
+  if (!currentUser || currentUser.role !== 'super_admin') {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <ShieldCheck className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">Super Administrator Access Required</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-6 max-w-sm mx-auto">
+            This governance hub requires authenticated Sanctum credentials with the `super_admin` role.
+          </p>
+          <button
+            onClick={() => openAuthModal('login')}
+            className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+          >
+            Sign In as Admin
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Stats
   const totalGMV = orders.reduce((sum, o) => sum + (o.orderStatus !== 'cancelled' ? o.grandTotal : 0), 0);

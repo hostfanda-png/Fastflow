@@ -12,7 +12,27 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({
   onSelectOrder,
   onExplore
 }) => {
-  const { orders, formatCurrency, currentUser } = useApp();
+  const { orders, formatCurrency, currentUser, openAuthModal } = useApp();
+
+  if (!currentUser) {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <Package className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">Sign in to view orders</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-6 max-w-sm mx-auto">
+            Please sign in to your Fastflow account to track real-time dispatches and view past order invoices.
+          </p>
+          <button
+            onClick={() => openAuthModal('login')}
+            className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+          >
+            Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const customerOrders = orders.filter((o) => o.customerId === currentUser.id);
 

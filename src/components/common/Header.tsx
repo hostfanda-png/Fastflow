@@ -160,25 +160,35 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Profile / Auth Button */}
             <div className="relative">
-              <button
-                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-                className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 border border-stone-200 hover:border-stone-300 rounded-lg text-xs font-medium text-stone-800 bg-white hover:bg-stone-50 transition-colors"
-              >
-                {currentUser.avatar ? (
-                  <img 
-                    src={currentUser.avatar} 
-                    alt={currentUser.name} 
-                    className="w-6 h-6 rounded-full object-cover shrink-0" 
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <UserIcon className="w-4 h-4 text-stone-500 shrink-0" />
-                )}
-                <span className="hidden sm:inline truncate max-w-[100px]">{currentUser.name.split(' ')[0]}</span>
-                <ChevronDown className="w-3 h-3 text-stone-400" />
-              </button>
+              {currentUser && isLoggedIn ? (
+                <button
+                  onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                  className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 border border-stone-200 hover:border-stone-300 rounded-lg text-xs font-medium text-stone-800 bg-white hover:bg-stone-50 transition-colors"
+                >
+                  {currentUser.avatar ? (
+                    <img 
+                      src={currentUser.avatar} 
+                      alt={currentUser.name} 
+                      className="w-6 h-6 rounded-full object-cover shrink-0" 
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <UserIcon className="w-4 h-4 text-stone-500 shrink-0" />
+                  )}
+                  <span className="hidden sm:inline truncate max-w-[100px]">{currentUser.name.split(' ')[0]}</span>
+                  <ChevronDown className="w-3 h-3 text-stone-400" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => openAuthModal('login')}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-stone-900 rounded-lg text-xs font-bold transition-colors"
+                >
+                  <UserIcon className="w-4 h-4 text-amber-600" />
+                  <span>Sign In</span>
+                </button>
+              )}
 
-              {profileDropdownOpen && (
+              {profileDropdownOpen && currentUser && (
                 <div className="absolute right-0 mt-1.5 w-56 bg-white border border-stone-200 rounded-2xl shadow-xl p-2 z-50 animate-fade-in">
                   <div className="px-3 py-2 border-b border-stone-100">
                     <p className="text-xs font-bold text-stone-900 truncate">{currentUser.name}</p>
@@ -214,27 +224,15 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
 
                   <div className="pt-1 border-t border-stone-100">
-                    {isLoggedIn ? (
-                      <button
-                        onClick={() => {
-                          logout();
-                          setProfileDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                      >
-                        Sign Out
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          openAuthModal('login');
-                          setProfileDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-amber-600 hover:bg-amber-50 rounded-xl transition-colors"
-                      >
-                        Sign In / Register
-                      </button>
-                    )}
+                    <button
+                      onClick={() => {
+                        logout();
+                        setProfileDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                    >
+                      Sign Out
+                    </button>
                   </div>
                 </div>
               )}

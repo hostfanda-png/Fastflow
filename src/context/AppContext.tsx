@@ -20,22 +20,6 @@ import {
   Address,
   PaymentMethod 
 } from '../types';
-import { 
-  DEMO_USERS, 
-  SEED_RESTAURANTS, 
-  SEED_PRODUCTS, 
-  SEED_CATEGORIES, 
-  SEED_RIDERS, 
-  SEED_ORDERS, 
-  SEED_COUPONS, 
-  SEED_REVIEWS, 
-  SEED_AUDIT_LOGS, 
-  SEED_FINANCIALS, 
-  SEED_DELIVERY_ZONES, 
-  SEED_BANNERS, 
-  SEED_CMS_PAGES, 
-  SEED_SETTINGS 
-} from '../data/seedData';
 import { authApi } from '../services/api/authApi';
 import { restaurantApi } from '../services/api/restaurantApi';
 import { categoryApi } from '../services/api/categoryApi';
@@ -68,15 +52,13 @@ interface AppContextType {
   refreshData: () => Promise<void>;
 
   // Current user & authentication
-  currentUser: User;
-  setCurrentUser: (user: User) => void;
+  currentUser: User | null;
+  setCurrentUser: (user: User | null) => void;
   isLoggedIn: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (userData: { name: string; email: string; password: string; phone: string; role?: string }) => Promise<void>;
   logout: () => Promise<void>;
-  switchRole: (roleName: string) => Promise<void>;
   hasPermission: (permission: Permission) => boolean;
-  demoUsers: User[];
 
   // Auth Modal State
   isAuthModalOpen: boolean;
@@ -102,8 +84,8 @@ interface AppContextType {
   selectedArea: string;
   setSelectedArea: (area: string) => void;
   savedAddresses: Address[];
-  currentAddress: Address;
-  setCurrentAddress: (addr: Address) => void;
+  currentAddress: Address | null;
+  setCurrentAddress: (addr: Address | null) => void;
   addSavedAddress: (addr: Address) => void;
 
   // Cart
@@ -181,13 +163,27 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  appName: 'Fastflow',
+  currencyCode: 'PKR',
+  currencySymbol: 'Rs.',
+  decimalPlaces: 0,
+  thousandSeparator: ',',
+  decimalSeparator: '.',
+  taxPercentage: 5,
+  serviceFee: 25,
+  baseDeliveryFee: 150,
+  defaultCommissionRate: 15,
+  activeLanguage: 'en',
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Loading & error state
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   // Current active user & Auth state
-  const [currentUser, setCurrentUser] = useState<User>(() => DEMO_USERS[4]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return typeof window !== 'undefined' && Boolean(localStorage.getItem('fastflow_auth_token'));
   });
@@ -271,8 +267,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       // Ignore network errors on logout
     } finally {
+      localStorage.removeItem('fastflow_auth_token');
       setIsLoggedIn(false);
-      setCurrentUser(DEMO_USERS[4]);
+      setCurrentUser(null);
       showToast('Logged out successfully', 'info');
     }
   };
@@ -301,11 +298,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .catch(() => {
           localStorage.removeItem('fastflow_auth_token');
           setIsLoggedIn(false);
+          setCurrentUser(null);
         });
     }
 
     const handleUnauthorized = () => {
+      localStorage.removeItem('fastflow_auth_token');
       setIsLoggedIn(false);
+      setCurrentUser(null);
       showToast('Session expired. Please sign in again.', 'error');
     };
 
@@ -313,54 +313,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('fastflow:unauthorized', handleUnauthorized);
   }, []);
 
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(SEED_RESTAURANTS);
-  const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
-  const [categories, setCategories] = useState<ProductCategory[]>(SEED_CATEGORIES);
-  const [riders, setRiders] = useState<Rider[]>(SEED_RIDERS);
-  const [orders, setOrders] = useState<Order[]>(SEED_ORDERS);
-  const [coupons, setCoupons] = useState<Coupon[]>(SEED_COUPONS);
-  const [reviews, setReviews] = useState<Review[]>(SEED_REVIEWS);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(SEED_AUDIT_LOGS);
-  const [financials, setFinancials] = useState<FinancialTransaction[]>(SEED_FINANCIALS);
-  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(SEED_DELIVERY_ZONES);
-  const [banners] = useState<Banner[]>(SEED_BANNERS);
-  const [cmsPages, setCmsPages] = useState<CMSPage[]>(SEED_CMS_PAGES);
-  const [settings, setSettings] = useState<SystemSettings>(SEED_SETTINGS);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [financials, setFinancials] = useState<FinancialTransaction[]>([]);
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [banners, setBanners] = useState<Banner[]>([]);
+  const [cmsPages, setCmsPages] = useState<CMSPage[]>([]);
+  const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
 
   // Location
   const [selectedCity, setSelectedCity] = useState('Lahore');
   const [selectedArea, setSelectedArea] = useState('Gulberg III');
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>([
-    {
-      id: 'addr-1',
-      label: 'Home',
-      street: 'House 44-B, Street 12, Sector Y',
-      area: 'DHA Phase 3',
-      city: 'Lahore',
-      lat: 31.4812,
-      lng: 74.3821,
-      deliveryInstructions: 'Ring doorbell, leave with gate security if unanswered.',
-      isDefault: true
-    },
-    {
-      id: 'addr-2',
-      label: 'Work',
-      street: 'Software Tech Park, 4th Floor, Ferozepur Rd',
-      area: 'Gulberg III',
-      city: 'Lahore',
-      lat: 31.5204,
-      lng: 74.3587,
-      deliveryInstructions: 'Call upon arrival at main lobby turnstiles.',
-      isDefault: false
-    }
-  ]);
-  const [currentAddress, setCurrentAddress] = useState<Address>(savedAddresses[0]);
+  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
+  const [currentAddress, setCurrentAddress] = useState<Address | null>(null);
 
   // Cart & Pricing
   const [cart, setCart] = useState<CartItem[]>([]);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [riderTip, setRiderTip] = useState<number>(0);
-  const [activeOrder, setActiveOrder] = useState<Order | null>(orders[0]);
+  const [activeOrder, setActiveOrder] = useState<Order | null>(null);
 
   // Replace cart modal state for single restaurant enforcement
   const [replaceCartModal, setReplaceCartModal] = useState<ReplaceCartModalState>({
@@ -387,47 +364,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Helper: check RBAC permission
   const hasPermission = (permission: Permission): boolean => {
+    if (!currentUser) return false;
     if (currentUser.role === 'super_admin') return true;
     return currentUser.permissions.includes(permission);
   };
 
-  // Switch role and authenticate
-  const switchRole = async (roleName: string) => {
-    const foundUser = DEMO_USERS.find((u) => u.role === roleName) || DEMO_USERS[0];
-    setCurrentUser(foundUser);
-    
-    // Attempt authentication with backend API endpoint /api/v1/auth/login
-    try {
-      await authApi.login(foundUser.email, 'demo_password_123');
-    } catch (e) {
-      // Graceful fallback for preview environment
-    }
-
-    showToast(`Switched active session to ${foundUser.name} (${foundUser.role})`, 'info');
-  };
-
-  // Fetch initial data from API
+  // Fetch data from real Laravel API
   const refreshData = async () => {
     setIsLoading(true);
     setApiError(null);
     try {
-      const [restRes, catRes, coupRes] = await Promise.allSettled([
+      const [restRes, catRes, coupRes, revRes, riderRes] = await Promise.allSettled([
         restaurantApi.getAll({ city: selectedCity }),
         categoryApi.getAll(),
         couponApi.getAll(),
+        reviewApi.getAll(),
+        riderApi.getAll(),
       ]);
 
-      if (restRes.status === 'fulfilled' && restRes.value.data?.length) {
+      if (restRes.status === 'fulfilled' && restRes.value.data) {
         setRestaurants(restRes.value.data);
       }
-      if (catRes.status === 'fulfilled' && catRes.value.data?.length) {
+      if (catRes.status === 'fulfilled' && catRes.value.data) {
         setCategories(catRes.value.data);
       }
-      if (coupRes.status === 'fulfilled' && coupRes.value.data?.length) {
+      if (coupRes.status === 'fulfilled' && coupRes.value.data) {
         setCoupons(coupRes.value.data);
       }
+      if (revRes.status === 'fulfilled' && revRes.value.data) {
+        setReviews(revRes.value.data);
+      }
+      if (riderRes.status === 'fulfilled' && riderRes.value.data) {
+        setRiders(riderRes.value.data);
+      }
     } catch (err: any) {
-      setApiError(err.message || 'Error fetching data from API');
+      setApiError(err.message || 'Error fetching data from Fastflow API');
     } finally {
       setIsLoading(false);
     }
@@ -441,9 +412,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logAuditAction = (action: string, module: string, recordId?: string, details?: string) => {
     const entry: AuditLog = {
       id: `log-${Date.now()}`,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
+      userId: currentUser?.id || 'guest',
+      userName: currentUser?.name || 'Guest',
+      role: currentUser?.role || 'customer',
       action,
       module,
       recordId,
@@ -666,14 +637,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Bag is empty');
     }
 
+    if (!currentUser) {
+      openAuthModal('login');
+      throw new Error('Please sign in to complete your order.');
+    }
+
+    const addr: Address = currentAddress || {
+      id: 'default-addr',
+      label: 'Other' as const,
+      street: `${selectedArea}, ${selectedCity}`,
+      area: selectedArea,
+      city: selectedCity,
+      lat: 31.5204,
+      lng: 74.3587,
+      deliveryInstructions: instructions || '',
+      isDefault: true
+    };
+
     const payload = {
       restaurant_id: cartRestaurant.id,
       delivery_address: {
-        street: currentAddress.street,
-        area: currentAddress.area,
-        city: currentAddress.city,
+        street: addr.street,
+        area: addr.area,
+        city: addr.city,
       },
-      delivery_instructions: instructions || currentAddress.deliveryInstructions,
+      delivery_instructions: instructions || addr.deliveryInstructions,
       payment_method: paymentMethod,
       coupon_code: appliedCoupon?.code,
       tip: cartTotals.tip,
@@ -686,60 +674,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })),
     };
 
-    let createdOrder: Order;
-    try {
-      const apiRes = await orderApi.checkout(payload as any);
-      createdOrder = apiRes.data;
-    } catch (err) {
-      // Construct local standard order
-      const orderNumber = `FD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100000 + Math.random() * 900000)}`;
-      const now = new Date().toISOString();
-
-      createdOrder = {
-        id: `ord-${Date.now()}`,
-        orderNumber,
-        customerId: currentUser.id,
-        customerName: currentUser.name,
-        customerPhone: currentUser.phone,
-        deliveryAddress: currentAddress,
-        deliveryInstructions: instructions || currentAddress.deliveryInstructions,
-        restaurantId: cartRestaurant.id,
-        restaurantName: cartRestaurant.name,
-        items: cart.map((ci) => ({
-          id: `oi-${Date.now()}-${ci.id}`,
-          productId: ci.productId,
-          productName: ci.productName,
-          quantity: ci.quantity,
-          unitPrice: ci.unitPrice,
-          totalPrice: ci.itemTotal,
-          variantName: ci.selectedVariant?.name,
-          addons: ci.selectedAddons.map(a => ({ name: a.name, price: a.price })),
-          instructions: ci.specialInstructions
-        })),
-        subtotal: cartTotals.subtotal,
-        discount: cartTotals.discount,
-        couponCode: appliedCoupon?.code,
-        deliveryFee: cartTotals.deliveryFee,
-        tax: cartTotals.tax,
-        serviceFee: cartTotals.serviceFee,
-        tip: cartTotals.tip,
-        grandTotal: cartTotals.grandTotal,
-        paymentMethod,
-        paymentStatus: paymentMethod === 'stripe' ? 'paid' : 'pending',
-        orderStatus: 'pending',
-        statusHistory: [
-          {
-            status: 'pending',
-            timestamp: now,
-            note: `Order placed via ${paymentMethod.toUpperCase()}`,
-            actor: currentUser.name
-          }
-        ],
-        createdAt: now,
-        estimatedDeliveryTime: '25-35 min',
-        hasBeenReviewed: false
-      };
+    const apiRes = await orderApi.checkout(payload as any);
+    if (!apiRes || !apiRes.data) {
+      throw new Error(apiRes?.message || 'Failed to place order on Fastflow server.');
     }
+    const createdOrder: Order = apiRes.data;
 
     setOrders((prev) => [createdOrder, ...prev]);
     setActiveOrder(createdOrder);
@@ -793,7 +732,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (ord.id === orderId) {
           const updatedHistory = [
             ...ord.statusHistory,
-            { status: newStatus, timestamp: now, note, actor: currentUser.name }
+            { status: newStatus, timestamp: now, note, actor: currentUser?.name || 'Staff' }
           ];
 
           const updated: Order = {
@@ -869,7 +808,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             cancellationReason: reason,
             statusHistory: [
               ...o.statusHistory,
-              { status: 'cancelled', timestamp: now, note: `Cancelled: ${reason}`, actor: currentUser.name }
+              { status: 'cancelled', timestamp: now, note: `Cancelled: ${reason}`, actor: currentUser?.name || 'Customer' }
             ]
           };
           if (activeOrder?.id === orderId) setActiveOrder(updated);
@@ -908,7 +847,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 status: 'assigned_to_rider',
                 timestamp: new Date().toISOString(),
                 note: `Courier ${rider.name} assigned to delivery`,
-                actor: currentUser.name
+                actor: currentUser?.name || 'System Dispatcher'
               }
             ]
           };
@@ -940,8 +879,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const currentRider = currentUser.role === 'delivery_rider'
-    ? riders.find((r) => r.userId === currentUser.id) || riders[0]
+  const currentRider = currentUser && currentUser.role === 'delivery_rider'
+    ? riders.find((r) => r.userId === currentUser.id) || null
     : null;
 
   const updateRiderStatus = async (riderId: string, status: Rider['status']) => {
@@ -1052,7 +991,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `rev-${Date.now()}`,
       orderId,
       restaurantId,
-      customerName: currentUser.name,
+      customerName: currentUser?.name || 'Customer',
       rating,
       foodRating,
       comment,
@@ -1182,9 +1121,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authModalMode,
         openAuthModal,
         closeAuthModal,
-        switchRole,
         hasPermission,
-        demoUsers: DEMO_USERS,
 
         restaurants,
         categories,

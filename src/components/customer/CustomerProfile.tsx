@@ -4,7 +4,7 @@ import { Address } from '../../types';
 import { User, MapPin, Plus, Trash2, Mail, Phone, ShieldCheck, Check } from 'lucide-react';
 
 export const CustomerProfile: React.FC = () => {
-  const { currentUser, savedAddresses, addSavedAddress, showToast } = useApp();
+  const { currentUser, savedAddresses, addSavedAddress, showToast, openAuthModal } = useApp();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [label, setLabel] = useState<'Home' | 'Work' | 'Other'>('Home');
@@ -12,6 +12,26 @@ export const CustomerProfile: React.FC = () => {
   const [area, setArea] = useState('Gulberg III');
   const [city, setCity] = useState('Lahore');
   const [instructions, setInstructions] = useState('');
+
+  if (!currentUser) {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <User className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">Sign in to view your profile</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-6 max-w-sm mx-auto">
+            Manage your saved delivery coordinates, contact details, and account preferences.
+          </p>
+          <button
+            onClick={() => openAuthModal('login')}
+            className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+          >
+            Sign In / Register
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const handleSaveAddress = (e: React.FormEvent) => {
     e.preventDefault();

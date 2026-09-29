@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Lock, Mail, User, Phone, ShieldCheck, Store, Bike, ChefHat, LogIn, UserPlus, AlertCircle } from 'lucide-react';
+import { X, Lock, Mail, User, Phone, LogIn, UserPlus, AlertCircle } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -60,13 +60,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleQuickFill = (demoEmail: string, demoRoleLabel: string) => {
-    setEmail(demoEmail);
-    setPassword('demo_password_123');
-    setMode('login');
-    showToast(`Loaded ${demoRoleLabel} demo credentials`, 'info');
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/70 backdrop-blur-sm animate-fade-in">
       <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden">
@@ -92,48 +85,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               ? 'Enter your verified credentials to access authorized marketplace features.'
               : 'Join Fastflow as a customer or apply as a restaurant merchant partner.'}
           </p>
-        </div>
-
-        {/* Quick Demo Credential Autofill */}
-        <div className="bg-stone-50 border-b border-stone-200 px-6 py-3">
-          <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider mb-2 flex items-center justify-between">
-            <span>Demo Quick Login</span>
-            <span className="text-[10px] font-normal text-stone-400">Fills official credentials</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
-            <button
-              type="button"
-              onClick={() => handleQuickFill('admin@fastflow.app', 'Super Admin')}
-              className="flex items-center justify-center gap-1 py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg border border-indigo-200 text-[11px] transition-colors"
-            >
-              <ShieldCheck className="w-3 h-3" />
-              <span>Admin</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('owner@fuegotrattoria.com', 'Restaurant Owner')}
-              className="flex items-center justify-center gap-1 py-1.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold rounded-lg border border-amber-200 text-[11px] transition-colors"
-            >
-              <Store className="w-3 h-3" />
-              <span>Owner</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('rider1@fastflow.app', 'Delivery Rider')}
-              className="flex items-center justify-center gap-1 py-1.5 px-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-semibold rounded-lg border border-sky-200 text-[11px] transition-colors"
-            >
-              <Bike className="w-3 h-3" />
-              <span>Rider</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('customer@fastflow.app', 'Customer')}
-              className="flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold rounded-lg border border-emerald-200 text-[11px] transition-colors"
-            >
-              <User className="w-3 h-3" />
-              <span>Customer</span>
-            </button>
-          </div>
         </div>
 
         {/* Error Alert */}

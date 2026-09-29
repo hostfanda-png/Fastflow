@@ -33,14 +33,49 @@ export const RestaurantDashboard: React.FC = () => {
     updateProduct, 
     deleteProduct, 
     toggleProductAvailability,
-    hasPermission 
+    hasPermission,
+    openAuthModal
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'orders' | 'menu' | 'staff' | 'settings'>('orders');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
 
+  if (!currentUser) {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <Store className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">Merchant Portal Sign In</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-6 max-w-sm mx-auto">
+            Sign in with your restaurant partner credentials to manage live kitchen tickets and update your menu.
+          </p>
+          <button
+            onClick={() => openAuthModal('login')}
+            className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+          >
+            Sign In to Merchant Portal
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Identify restaurant for the logged-in owner/staff
   const currentRestaurant = restaurants.find((r) => r.id === currentUser.restaurantId) || restaurants[0];
+
+  if (!currentRestaurant) {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <Store className="w-12 h-12 text-amber-500 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">No Restaurant Assigned</h3>
+          <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto">
+            Your partner account is pending admin verification or has no active kitchen branch assigned yet.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Orders for this restaurant
   const restaurantOrders = orders.filter((o) => o.restaurantId === currentRestaurant.id);

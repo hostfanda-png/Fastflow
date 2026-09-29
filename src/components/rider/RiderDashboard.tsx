@@ -23,19 +23,40 @@ export const RiderDashboard: React.FC = () => {
     orders, 
     updateOrderStatus, 
     formatCurrency,
-    showToast 
+    showToast,
+    openAuthModal 
   } = useApp();
 
+  if (!currentUser) {
+    return (
+      <div className="max-w-4xl mx-auto pb-24 px-4">
+        <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+          <Bike className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-stone-800">Delivery Courier Sign In</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-6 max-w-sm mx-auto">
+            Sign in to accept delivery jobs, update your live transit status, and view delivery earnings.
+          </p>
+          <button
+            onClick={() => openAuthModal('login')}
+            className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+          >
+            Sign In as Courier
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const rider = currentRider || {
-    id: 'rider-tariq',
+    id: `rider-${currentUser.id}`,
     name: currentUser.name,
     phone: currentUser.phone,
     vehicle: 'Motorcycle',
     vehicleNumber: 'LEK-2024-81',
     status: 'available' as const,
-    todayEarnings: 2840,
-    totalDeliveries: 428,
-    rating: 4.9
+    todayEarnings: 0,
+    totalDeliveries: 0,
+    rating: 5.0
   };
 
   // Find active deliveries assigned to this rider

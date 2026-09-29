@@ -3,7 +3,6 @@ import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
 import { ToastContainer } from './components/common/Toast';
-import { RoleSwitcher } from './components/common/RoleSwitcher';
 import { HeroBanner } from './components/customer/HeroBanner';
 import { CategoryList } from './components/customer/CategoryList';
 import { RestaurantCard } from './components/customer/RestaurantCard';
@@ -452,12 +451,6 @@ const MainApp: React.FC = () => {
           setActiveView(view);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
-      />
-
-      {/* Floating Demo Role Switcher HUD */}
-      <RoleSwitcher
-        activeView={activeView}
-        setActiveView={setActiveView}
       />
 
       {/* Transient Alerts / Toasts */}

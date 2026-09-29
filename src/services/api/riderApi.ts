@@ -1,6 +1,10 @@
 import { apiClient, ApiResponse } from './client';
 
 export const riderApi = {
+  getAll: async (): Promise<ApiResponse<any[]>> => {
+    return apiClient.get('/riders');
+  },
+
   getAssignedOrders: async (): Promise<ApiResponse<{ rider: any; orders: any[] }>> => {
     return apiClient.get('/rider/orders');
   },

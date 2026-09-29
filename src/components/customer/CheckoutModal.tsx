@@ -41,7 +41,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [deliveryInstructions, setDeliveryInstructions] = useState<string>(
-    currentAddress.deliveryInstructions || ''
+    currentAddress?.deliveryInstructions || ''
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -185,7 +185,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {savedAddresses.map((addr) => {
-                  const isSelected = currentAddress.id === addr.id;
+                  const isSelected = currentAddress?.id === addr.id;
                   return (
                     <div
                       key={addr.id}
