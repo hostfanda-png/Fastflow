@@ -29,6 +29,9 @@ import {
   CheckCircle,
   Tag
 } from 'lucide-react';
+import { SkeletonLoader } from './components/common/SkeletonLoader';
+import { ApiErrorMessage } from './components/common/ApiErrorMessage';
+import { LoadingSpinner } from './components/common/LoadingSpinner';
 
 const MainApp: React.FC = () => {
   const { 
@@ -39,7 +42,10 @@ const MainApp: React.FC = () => {
     activeOrder, 
     setActiveOrder, 
     orders,
-    formatCurrency 
+    formatCurrency,
+    isLoading,
+    apiError,
+    refreshData 
   } = useApp();
 
   const [activeView, setActiveView] = useState<string>('storefront');
@@ -196,7 +202,13 @@ const MainApp: React.FC = () => {
                 </div>
               </div>
 
-              {filteredRestaurants.length === 0 ? (
+              {apiError && (
+                <ApiErrorMessage message={apiError} onRetry={refreshData} />
+              )}
+
+              {isLoading ? (
+                <SkeletonLoader type="card" count={4} />
+              ) : filteredRestaurants.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
                   <p className="text-sm font-bold text-stone-800">No restaurants match your search</p>
                   <p className="text-xs text-stone-500 mt-1">Try clearing filters or search terms.</p>

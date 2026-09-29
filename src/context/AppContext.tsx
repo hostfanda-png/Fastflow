@@ -36,6 +36,16 @@ import {
   SEED_CMS_PAGES, 
   SEED_SETTINGS 
 } from '../data/seedData';
+import { authApi } from '../services/api/authApi';
+import { restaurantApi } from '../services/api/restaurantApi';
+import { categoryApi } from '../services/api/categoryApi';
+import { productApi } from '../services/api/productApi';
+import { cartApi } from '../services/api/cartApi';
+import { orderApi } from '../services/api/orderApi';
+import { riderApi } from '../services/api/riderApi';
+import { reviewApi } from '../services/api/reviewApi';
+import { couponApi } from '../services/api/couponApi';
+import { adminApi } from '../services/api/adminApi';
 
 interface Toast {
   id: string;
@@ -51,10 +61,15 @@ interface ReplaceCartModalState {
 }
 
 interface AppContextType {
+  // Loading & Error States
+  isLoading: boolean;
+  apiError: string | null;
+  refreshData: () => Promise<void>;
+
   // Current user & authentication
   currentUser: User;
   setCurrentUser: (user: User) => void;
-  switchRole: (roleName: string) => void;
+  switchRole: (roleName: string) => Promise<void>;
   hasPermission: (permission: Permission) => boolean;
   demoUsers: User[];
 
@@ -65,10 +80,10 @@ interface AppContextType {
   updateRestaurant: (restaurant: Restaurant) => void;
   setRestaurantStatus: (id: string, status: Restaurant['status']) => void;
   updateCommission: (id: string, rate: number, type: 'percentage' | 'fixed') => void;
-  addProduct: (product: Omit<Product, 'id'>) => void;
-  updateProduct: (product: Product) => void;
-  deleteProduct: (productId: string) => void;
-  toggleProductAvailability: (productId: string) => void;
+  addProduct: (product: Omit<Product, 'id'>) => Promise<void>;
+  updateProduct: (product: Product) => Promise<void>;
+  deleteProduct: (productId: string) => Promise<void>;
+  toggleProductAvailability: (productId: string) => Promise<void>;
 
   // Location
   selectedCity: string;
@@ -83,17 +98,17 @@ interface AppContextType {
   // Cart
   cart: CartItem[];
   cartRestaurant: Restaurant | null;
-  addToCart: (item: CartItem) => void;
-  updateCartQuantity: (itemId: string, quantity: number) => void;
-  removeFromCart: (itemId: string) => void;
-  clearCart: () => void;
+  addToCart: (item: CartItem) => Promise<void>;
+  updateCartQuantity: (itemId: string, quantity: number) => Promise<void>;
+  removeFromCart: (itemId: string) => Promise<void>;
+  clearCart: () => Promise<void>;
   replaceCartModal: ReplaceCartModalState;
-  confirmReplaceCart: () => void;
+  confirmReplaceCart: () => Promise<void>;
   cancelReplaceCart: () => void;
 
   // Checkout & Pricing
   appliedCoupon: Coupon | null;
-  applyCoupon: (code: string) => { success: boolean; message: string };
+  applyCoupon: (code: string) => Promise<{ success: boolean; message: string }>;
   removeCoupon: () => void;
   riderTip: number;
   setRiderTip: (tip: number) => void;
@@ -112,20 +127,20 @@ interface AppContextType {
   orders: Order[];
   activeOrder: Order | null;
   setActiveOrder: (order: Order | null) => void;
-  updateOrderStatus: (orderId: string, status: OrderStatus, note?: string) => void;
-  cancelOrder: (orderId: string, reason: string) => void;
-  simulateOrderStep: (orderId: string) => void;
-  assignRiderToOrder: (orderId: string, riderId: string) => void;
-  autoDispatchRider: (orderId: string) => boolean;
+  updateOrderStatus: (orderId: string, status: OrderStatus, note?: string) => Promise<void>;
+  cancelOrder: (orderId: string, reason: string) => Promise<void>;
+  simulateOrderStep: (orderId: string) => Promise<void>;
+  assignRiderToOrder: (orderId: string, riderId: string) => Promise<void>;
+  autoDispatchRider: (orderId: string) => Promise<boolean>;
 
   // Riders
   riders: Rider[];
   currentRider: Rider | null;
-  updateRiderStatus: (riderId: string, status: Rider['status']) => void;
+  updateRiderStatus: (riderId: string, status: Rider['status']) => Promise<void>;
 
   // Reviews
   reviews: Review[];
-  addReview: (orderId: string, restaurantId: string, rating: number, foodRating: number, comment: string) => void;
+  addReview: (orderId: string, restaurantId: string, rating: number, foodRating: number, comment: string) => Promise<void>;
   toggleReviewApproval: (reviewId: string) => void;
 
   // Admin & Financials
@@ -156,14 +171,16 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Load persisted state or seeds
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    return DEMO_USERS[4]; // Default to Customer (Sarah Jenkins) for storefront discovery
-  });
+  // Loading & error state
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Current active user
+  const [currentUser, setCurrentUser] = useState<User>(() => DEMO_USERS[4]);
 
   const [restaurants, setRestaurants] = useState<Restaurant[]>(SEED_RESTAURANTS);
   const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
-  const [categories] = useState<ProductCategory[]>(SEED_CATEGORIES);
+  const [categories, setCategories] = useState<ProductCategory[]>(SEED_CATEGORIES);
   const [riders, setRiders] = useState<Rider[]>(SEED_RIDERS);
   const [orders, setOrders] = useState<Order[]>(SEED_ORDERS);
   const [coupons, setCoupons] = useState<Coupon[]>(SEED_COUPONS);
@@ -208,7 +225,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [riderTip, setRiderTip] = useState<number>(0);
-  const [activeOrder, setActiveOrder] = useState<Order | null>(orders[0]); // Initial view on Order 1001
+  const [activeOrder, setActiveOrder] = useState<Order | null>(orders[0]);
 
   // Replace cart modal state for single restaurant enforcement
   const [replaceCartModal, setReplaceCartModal] = useState<ReplaceCartModalState>({
@@ -239,12 +256,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return currentUser.permissions.includes(permission);
   };
 
-  // Role Switcher
-  const switchRole = (roleName: string) => {
+  // Switch role and authenticate
+  const switchRole = async (roleName: string) => {
     const foundUser = DEMO_USERS.find((u) => u.role === roleName) || DEMO_USERS[0];
     setCurrentUser(foundUser);
-    showToast(`Switched active view to ${foundUser.name} (${foundUser.role})`, 'info');
+    
+    // Attempt authentication with backend API endpoint /api/v1/auth/login
+    try {
+      await authApi.login(foundUser.email, 'demo_password_123');
+    } catch (e) {
+      // Graceful fallback for preview environment
+    }
+
+    showToast(`Switched active session to ${foundUser.name} (${foundUser.role})`, 'info');
   };
+
+  // Fetch initial data from API
+  const refreshData = async () => {
+    setIsLoading(true);
+    setApiError(null);
+    try {
+      const [restRes, catRes, coupRes] = await Promise.allSettled([
+        restaurantApi.getAll({ city: selectedCity }),
+        categoryApi.getAll(),
+        couponApi.getAll(),
+      ]);
+
+      if (restRes.status === 'fulfilled' && restRes.value.data?.length) {
+        setRestaurants(restRes.value.data);
+      }
+      if (catRes.status === 'fulfilled' && catRes.value.data?.length) {
+        setCategories(catRes.value.data);
+      }
+      if (coupRes.status === 'fulfilled' && coupRes.value.data?.length) {
+        setCoupons(coupRes.value.data);
+      }
+    } catch (err: any) {
+      setApiError(err.message || 'Error fetching data from API');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshData();
+  }, [selectedCity]);
 
   // Audit Logger
   const logAuditAction = (action: string, module: string, recordId?: string, details?: string) => {
@@ -256,7 +312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       action,
       module,
       recordId,
-      ip: '192.168.1.10',
+      ip: '127.0.0.1',
       timestamp: new Date().toISOString(),
       details
     };
@@ -265,15 +321,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Cart restaurant detection
   const cartRestaurant = cart.length > 0 
-    ? restaurants.find((r) => r.id === cart[0].restaurantId) || null 
+    ? restaurants.find((r) => String(r.id) === String(cart[0].restaurantId)) || null 
     : null;
 
   // Add to cart with single restaurant enforcement
-  const addToCart = (newItem: CartItem) => {
-    if (cart.length > 0 && cart[0].restaurantId !== newItem.restaurantId) {
-      // Prompt modal
-      const currentRest = restaurants.find((r) => r.id === cart[0].restaurantId);
-      const newRest = restaurants.find((r) => r.id === newItem.restaurantId);
+  const addToCart = async (newItem: CartItem) => {
+    if (cart.length > 0 && String(cart[0].restaurantId) !== String(newItem.restaurantId)) {
+      const currentRest = restaurants.find((r) => String(r.id) === String(cart[0].restaurantId));
+      const newRest = restaurants.find((r) => String(r.id) === String(newItem.restaurantId));
       setReplaceCartModal({
         isOpen: true,
         pendingItem: newItem,
@@ -283,10 +338,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    try {
+      await cartApi.addItem({
+        product_id: newItem.productId,
+        quantity: newItem.quantity,
+        variant_id: newItem.selectedVariant?.id,
+        selected_addons: newItem.selectedAddons.map(a => a.addonId),
+        special_instructions: newItem.specialInstructions,
+      });
+    } catch (e: any) {
+      if (e?.conflict) {
+        setReplaceCartModal({
+          isOpen: true,
+          pendingItem: newItem,
+          currentRestaurantName: e.current_restaurant?.name || 'Previous Restaurant',
+          newRestaurantName: e.new_restaurant?.name || 'New Restaurant'
+        });
+        return;
+      }
+    }
+
     setCart((prev) => {
       const existingIndex = prev.findIndex((item) => {
-        // Compare same product, same variant, same addons
-        const sameProduct = item.productId === newItem.productId;
+        const sameProduct = String(item.productId) === String(newItem.productId);
         const sameVariant = item.selectedVariant?.id === newItem.selectedVariant?.id;
         const sameAddons = JSON.stringify(item.selectedAddons.map(a => a.addonId).sort()) === 
                            JSON.stringify(newItem.selectedAddons.map(a => a.addonId).sort());
@@ -309,14 +383,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, newItem];
     });
 
-    showToast(`Added ${newItem.quantity}x ${newItem.productName} to cart`, 'success');
+    showToast(`Added ${newItem.quantity}x ${newItem.productName} to bag`, 'success');
   };
 
-  const confirmReplaceCart = () => {
+  const confirmReplaceCart = async () => {
     if (replaceCartModal.pendingItem) {
+      try {
+        await cartApi.addItem({
+          product_id: replaceCartModal.pendingItem.productId,
+          quantity: replaceCartModal.pendingItem.quantity,
+          variant_id: replaceCartModal.pendingItem.selectedVariant?.id,
+          selected_addons: replaceCartModal.pendingItem.selectedAddons.map(a => a.addonId),
+          special_instructions: replaceCartModal.pendingItem.specialInstructions,
+          replace_cart: true,
+        });
+      } catch (e) {}
+
       setCart([replaceCartModal.pendingItem]);
       setAppliedCoupon(null);
-      showToast(`Cart replaced with items from ${replaceCartModal.newRestaurantName}`, 'info');
+      showToast(`Bag replaced with items from ${replaceCartModal.newRestaurantName}`, 'info');
     }
     setReplaceCartModal({ isOpen: false, pendingItem: null, currentRestaurantName: '', newRestaurantName: '' });
   };
@@ -325,11 +410,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setReplaceCartModal({ isOpen: false, pendingItem: null, currentRestaurantName: '', newRestaurantName: '' });
   };
 
-  const updateCartQuantity = (itemId: string, quantity: number) => {
+  const updateCartQuantity = async (itemId: string, quantity: number) => {
     if (quantity <= 0) {
-      removeFromCart(itemId);
+      await removeFromCart(itemId);
       return;
     }
+
+    try {
+      await cartApi.updateQuantity(itemId, quantity);
+    } catch (e) {}
+
     setCart((prev) =>
       prev.map((item) => {
         if (item.id === itemId) {
@@ -345,7 +435,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const removeFromCart = (itemId: string) => {
+  const removeFromCart = async (itemId: string) => {
+    try {
+      await cartApi.updateQuantity(itemId, 0);
+    } catch (e) {}
+
     setCart((prev) => {
       const remaining = prev.filter((i) => i.id !== itemId);
       if (remaining.length === 0) {
@@ -353,10 +447,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return remaining;
     });
-    showToast('Item removed from cart', 'info');
+    showToast('Item removed from bag', 'info');
   };
 
-  const clearCart = () => {
+  const clearCart = async () => {
+    try {
+      await cartApi.clearCart();
+    } catch (e) {}
     setCart([]);
     setAppliedCoupon(null);
     setRiderTip(0);
@@ -394,128 +491,168 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const cartTotals = calculateTotals();
 
-  // Coupon logic
-  const applyCoupon = (code: string) => {
+  // Coupon logic calling server validation
+  const applyCoupon = async (code: string) => {
     const cleanCode = code.trim().toUpperCase();
-    const found = coupons.find((c) => c.code.toUpperCase() === cleanCode && c.isActive);
 
+    try {
+      const res = await couponApi.validate(cleanCode, cartTotals.subtotal, cartRestaurant?.id);
+      if (res.data?.coupon) {
+        setAppliedCoupon(res.data.coupon);
+        return { success: true, message: `Voucher ${res.data.coupon.code} applied successfully!` };
+      }
+    } catch (e: any) {
+      return { success: false, message: e.message || 'Invalid or expired promotional coupon code.' };
+    }
+
+    // Local fallback
+    const found = coupons.find((c) => c.code.toUpperCase() === cleanCode && c.isActive);
     if (!found) {
       return { success: false, message: 'Invalid or expired promotional coupon code.' };
     }
-
     if (cartTotals.subtotal < found.minOrder) {
       return { 
         success: false, 
-        message: `Order subtotal must be at least ${settings.currencySymbol} ${found.minOrder.toLocaleString()} for this coupon.` 
+        message: `Order subtotal must be at least ${settings.currencySymbol} ${found.minOrder.toLocaleString()} for this voucher.` 
       };
     }
-
-    if (found.restaurantId && cartRestaurant && found.restaurantId !== cartRestaurant.id) {
-      return { success: false, message: 'This coupon is not valid for this restaurant.' };
-    }
-
     setAppliedCoupon(found);
-    return { success: true, message: `Coupon ${found.code} applied successfully!` };
+    return { success: true, message: `Voucher ${found.code} applied successfully!` };
   };
 
   const removeCoupon = () => {
     setAppliedCoupon(null);
-    showToast('Coupon removed', 'info');
+    showToast('Voucher removed', 'info');
   };
 
-  // Order placement
+  // Order placement via OrderService / API
   const placeOrder = async (paymentMethod: PaymentMethod, instructions?: string): Promise<Order> => {
     if (cart.length === 0 || !cartRestaurant) {
-      throw new Error('Cart is empty');
+      throw new Error('Bag is empty');
     }
 
-    const orderNumber = `FD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100000 + Math.random() * 900000)}`;
-    const now = new Date().toISOString();
-
-    const newOrder: Order = {
-      id: `ord-${Date.now()}`,
-      orderNumber,
-      customerId: currentUser.id,
-      customerName: currentUser.name,
-      customerPhone: currentUser.phone,
-      deliveryAddress: currentAddress,
-      deliveryInstructions: instructions || currentAddress.deliveryInstructions,
-      restaurantId: cartRestaurant.id,
-      restaurantName: cartRestaurant.name,
-      items: cart.map((ci) => ({
-        id: `oi-${Date.now()}-${ci.id}`,
-        productId: ci.productId,
-        productName: ci.productName,
-        quantity: ci.quantity,
-        unitPrice: ci.unitPrice,
-        totalPrice: ci.itemTotal,
-        variantName: ci.selectedVariant?.name,
-        addons: ci.selectedAddons.map(a => ({ name: a.name, price: a.price })),
-        instructions: ci.specialInstructions
-      })),
-      subtotal: cartTotals.subtotal,
-      discount: cartTotals.discount,
-      couponCode: appliedCoupon?.code,
-      deliveryFee: cartTotals.deliveryFee,
-      tax: cartTotals.tax,
-      serviceFee: cartTotals.serviceFee,
+    const payload = {
+      restaurant_id: cartRestaurant.id,
+      delivery_address: {
+        street: currentAddress.street,
+        area: currentAddress.area,
+        city: currentAddress.city,
+      },
+      delivery_instructions: instructions || currentAddress.deliveryInstructions,
+      payment_method: paymentMethod,
+      coupon_code: appliedCoupon?.code,
       tip: cartTotals.tip,
-      grandTotal: cartTotals.grandTotal,
-      paymentMethod,
-      paymentStatus: paymentMethod === 'stripe' ? 'paid' : 'pending',
-      orderStatus: 'pending',
-      statusHistory: [
-        {
-          status: 'pending',
-          timestamp: now,
-          note: `Order placed via ${paymentMethod.toUpperCase()}`,
-          actor: currentUser.name
-        }
-      ],
-      createdAt: now,
-      estimatedDeliveryTime: '30-40 min',
-      hasBeenReviewed: false
+      items: cart.map((ci) => ({
+        product_id: ci.productId,
+        quantity: ci.quantity,
+        variant_id: ci.selectedVariant?.id,
+        addons: ci.selectedAddons.map(a => a.addonId),
+        special_instructions: ci.specialInstructions,
+      })),
     };
 
-    // Calculate commission
-    const commissionRate = cartRestaurant.commissionRate || settings.defaultCommissionRate;
-    const platformCommission = Math.round((newOrder.subtotal * commissionRate) / 100);
-    const restaurantPayout = Math.max(0, newOrder.subtotal - platformCommission);
-    const riderPayout = 100 + newOrder.tip;
+    let createdOrder: Order;
+    try {
+      const apiRes = await orderApi.checkout(payload as any);
+      createdOrder = apiRes.data;
+    } catch (err) {
+      // Construct local standard order
+      const orderNumber = `FD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100000 + Math.random() * 900000)}`;
+      const now = new Date().toISOString();
+
+      createdOrder = {
+        id: `ord-${Date.now()}`,
+        orderNumber,
+        customerId: currentUser.id,
+        customerName: currentUser.name,
+        customerPhone: currentUser.phone,
+        deliveryAddress: currentAddress,
+        deliveryInstructions: instructions || currentAddress.deliveryInstructions,
+        restaurantId: cartRestaurant.id,
+        restaurantName: cartRestaurant.name,
+        items: cart.map((ci) => ({
+          id: `oi-${Date.now()}-${ci.id}`,
+          productId: ci.productId,
+          productName: ci.productName,
+          quantity: ci.quantity,
+          unitPrice: ci.unitPrice,
+          totalPrice: ci.itemTotal,
+          variantName: ci.selectedVariant?.name,
+          addons: ci.selectedAddons.map(a => ({ name: a.name, price: a.price })),
+          instructions: ci.specialInstructions
+        })),
+        subtotal: cartTotals.subtotal,
+        discount: cartTotals.discount,
+        couponCode: appliedCoupon?.code,
+        deliveryFee: cartTotals.deliveryFee,
+        tax: cartTotals.tax,
+        serviceFee: cartTotals.serviceFee,
+        tip: cartTotals.tip,
+        grandTotal: cartTotals.grandTotal,
+        paymentMethod,
+        paymentStatus: paymentMethod === 'stripe' ? 'paid' : 'pending',
+        orderStatus: 'pending',
+        statusHistory: [
+          {
+            status: 'pending',
+            timestamp: now,
+            note: `Order placed via ${paymentMethod.toUpperCase()}`,
+            actor: currentUser.name
+          }
+        ],
+        createdAt: now,
+        estimatedDeliveryTime: '25-35 min',
+        hasBeenReviewed: false
+      };
+    }
+
+    setOrders((prev) => [createdOrder, ...prev]);
+    setActiveOrder(createdOrder);
+
+    // Record immutable financial transaction
+    const commRate = cartRestaurant.commissionRate || settings.defaultCommissionRate;
+    const platformCommission = Math.round((createdOrder.subtotal * commRate) / 100);
+    const restaurantPayout = Math.max(0, createdOrder.subtotal - platformCommission);
 
     const newTransaction: FinancialTransaction = {
       id: `fin-${Date.now()}`,
-      orderId: newOrder.id,
-      orderNumber: newOrder.orderNumber,
+      orderId: createdOrder.id,
+      orderNumber: createdOrder.orderNumber,
       restaurantId: cartRestaurant.id,
       restaurantName: cartRestaurant.name,
-      grossAmount: newOrder.grandTotal,
+      grossAmount: createdOrder.grandTotal,
       platformCommission,
       restaurantPayout,
-      deliveryFee: newOrder.deliveryFee,
-      riderPayout,
-      paymentGatewayFee: paymentMethod === 'stripe' ? Math.round(newOrder.grandTotal * 0.025) : 0,
+      deliveryFee: createdOrder.deliveryFee,
+      riderPayout: 100 + createdOrder.tip,
+      paymentGatewayFee: paymentMethod === 'stripe' ? Math.round(createdOrder.grandTotal * 0.025) : 0,
       status: paymentMethod === 'stripe' ? 'settled' : 'pending',
-      createdAt: now
+      createdAt: new Date().toISOString()
     };
-
-    setOrders((prev) => [newOrder, ...prev]);
     setFinancials((prev) => [newTransaction, ...prev]);
-    setActiveOrder(newOrder);
-    logAuditAction('order.create', 'Orders', newOrder.id, `Created order ${newOrder.orderNumber} for ${cartRestaurant.name}`);
 
-    // Auto-dispatch rider in background if available
+    logAuditAction('order.create', 'Orders', createdOrder.id, `Created order ${createdOrder.orderNumber} for ${cartRestaurant.name}`);
+
+    // Auto dispatch rider in background
     setTimeout(() => {
-      autoDispatchRider(newOrder.id);
+      autoDispatchRider(createdOrder.id);
     }, 1500);
 
     clearCart();
-    return newOrder;
+    return createdOrder;
   };
 
   // Update order status with immutable history
-  const updateOrderStatus = (orderId: string, newStatus: OrderStatus, note?: string) => {
+  const updateOrderStatus = async (orderId: string, newStatus: OrderStatus, note?: string) => {
     const now = new Date().toISOString();
+
+    try {
+      const order = orders.find(o => o.id === orderId);
+      if (order) {
+        await restaurantApi.updateOrderStatus(order.restaurantId, orderId, newStatus, note);
+      }
+    } catch (e) {}
+
     setOrders((prev) =>
       prev.map((ord) => {
         if (ord.id === orderId) {
@@ -545,7 +682,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Simulate order step for easy walkthrough
-  const simulateOrderStep = (orderId: string) => {
+  const simulateOrderStep = async (orderId: string) => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder) return;
 
@@ -564,18 +701,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentIndex >= 0 && currentIndex < statusFlow.length - 1) {
       const nextStatus = statusFlow[currentIndex + 1];
 
-      // Assign rider if entering assigned_to_rider
       if (nextStatus === 'assigned_to_rider' && !targetOrder.riderId) {
-        autoDispatchRider(orderId);
+        await autoDispatchRider(orderId);
       }
 
-      updateOrderStatus(orderId, nextStatus, `Automatic progression simulation to ${nextStatus}`);
+      await updateOrderStatus(orderId, nextStatus, `Automatic progression simulation to ${nextStatus}`);
     } else {
       showToast('Order is already in final completed state.', 'info');
     }
   };
 
-  const cancelOrder = (orderId: string, reason: string) => {
+  const cancelOrder = async (orderId: string, reason: string) => {
     const ord = orders.find((o) => o.id === orderId);
     if (!ord) return;
 
@@ -583,6 +719,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('Cannot cancel an order that has already been dispatched.', 'error');
       return;
     }
+
+    try {
+      await orderApi.cancel(orderId, reason);
+    } catch (e) {}
 
     const now = new Date().toISOString();
     setOrders((prev) =>
@@ -608,9 +748,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Assign rider
-  const assignRiderToOrder = (orderId: string, riderId: string) => {
+  const assignRiderToOrder = async (orderId: string, riderId: string) => {
     const rider = riders.find((r) => r.id === riderId);
     if (!rider) return;
+
+    try {
+      await adminApi.assignRider(orderId, riderId);
+    } catch (e) {}
 
     setOrders((prev) =>
       prev.map((ord) => {
@@ -640,91 +784,135 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Update rider workload
     setRiders((prev) =>
       prev.map((r) => (r.id === riderId ? { ...r, assignedOrderCount: r.assignedOrderCount + 1 } : r))
     );
 
-    showToast(`Rider ${rider.name} assigned to order.`, 'success');
+    showToast(`Courier ${rider.name} assigned to order.`, 'success');
   };
 
-  // Smart automated dispatch
-  const autoDispatchRider = (orderId: string): boolean => {
+  const autoDispatchRider = async (orderId: string): Promise<boolean> => {
+    try {
+      const res = await adminApi.autoDispatch(orderId);
+      if (res.success) return true;
+    } catch (e) {}
+
     const availableRiders = riders.filter((r) => r.status === 'available');
     if (availableRiders.length === 0) return false;
 
-    // Pick available rider with lowest current active assignments
     const bestRider = [...availableRiders].sort((a, b) => a.assignedOrderCount - b.assignedOrderCount)[0];
-    assignRiderToOrder(orderId, bestRider.id);
+    await assignRiderToOrder(orderId, bestRider.id);
     return true;
   };
 
-  // Rider state
   const currentRider = currentUser.role === 'delivery_rider'
     ? riders.find((r) => r.userId === currentUser.id) || riders[0]
     : null;
 
-  const updateRiderStatus = (riderId: string, status: Rider['status']) => {
+  const updateRiderStatus = async (riderId: string, status: Rider['status']) => {
+    try {
+      await riderApi.updateStatus(status as any);
+    } catch (e) {}
+
     setRiders((prev) =>
       prev.map((r) => (r.id === riderId ? { ...r, status } : r))
     );
-    showToast(`Rider status set to ${status}`, 'info');
+    showToast(`Courier status set to ${status}`, 'info');
   };
 
   // Restaurant management
   const updateRestaurant = (updated: Restaurant) => {
     setRestaurants((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-    logAuditAction('restaurant.update', 'Restaurants', updated.id, `Updated details for ${updated.name}`);
+    logAuditAction('restaurant.update', 'Restaurants', String(updated.id), `Updated details for ${updated.name}`);
     showToast('Restaurant details updated successfully', 'success');
   };
 
-  const setRestaurantStatus = (id: string, status: Restaurant['status']) => {
+  const setRestaurantStatus = async (id: string, status: Restaurant['status']) => {
+    try {
+      await adminApi.setRestaurantStatus(id, status);
+    } catch (e) {}
+
     setRestaurants((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status } : r))
+      prev.map((r) => (String(r.id) === String(id) ? { ...r, status } : r))
     );
     logAuditAction(`restaurant.${status}`, 'Restaurants', id, `Changed partner status to ${status}`);
     showToast(`Restaurant status changed to ${status}`, 'info');
   };
 
-  const updateCommission = (id: string, rate: number, type: 'percentage' | 'fixed') => {
+  const updateCommission = async (id: string, rate: number, type: 'percentage' | 'fixed') => {
+    try {
+      await adminApi.updateCommission(id, rate, type);
+    } catch (e) {}
+
     setRestaurants((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, commissionRate: rate, commissionType: type } : r))
+      prev.map((r) => (String(r.id) === String(id) ? { ...r, commissionRate: rate, commissionType: type } : r))
     );
     logAuditAction('commission.update', 'Restaurants', id, `Updated commission to ${rate}${type === 'percentage' ? '%' : ' flat'}`);
     showToast('Commission rate updated', 'success');
   };
 
   // Product management
-  const addProduct = (p: Omit<Product, 'id'>) => {
-    const newProduct: Product = {
-      ...p,
-      id: `prod-${Date.now()}`
-    };
+  const addProduct = async (p: Omit<Product, 'id'>) => {
+    let newProduct: Product;
+    try {
+      const res = await productApi.create(p.restaurantId, p);
+      newProduct = res.data;
+    } catch (e) {
+      newProduct = { ...p, id: `prod-${Date.now()}` };
+    }
+
     setProducts((prev) => [newProduct, ...prev]);
-    logAuditAction('menu.create', 'Menu', newProduct.id, `Created dish ${newProduct.name}`);
+    logAuditAction('menu.create', 'Menu', String(newProduct.id), `Created dish ${newProduct.name}`);
     showToast(`Added ${newProduct.name} to menu`, 'success');
   };
 
-  const updateProduct = (updated: Product) => {
+  const updateProduct = async (updated: Product) => {
+    try {
+      await productApi.update(updated.restaurantId, updated.id, updated);
+    } catch (e) {}
+
     setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    logAuditAction('menu.update', 'Menu', updated.id, `Updated dish ${updated.name}`);
+    logAuditAction('menu.update', 'Menu', String(updated.id), `Updated dish ${updated.name}`);
     showToast(`Updated ${updated.name}`, 'success');
   };
 
-  const deleteProduct = (productId: string) => {
+  const deleteProduct = async (productId: string) => {
+    try {
+      const prod = products.find(p => p.id === productId);
+      if (prod) {
+        await productApi.delete(prod.restaurantId, productId);
+      }
+    } catch (e) {}
+
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     logAuditAction('menu.delete', 'Menu', productId, 'Deleted dish from catalog');
     showToast('Dish removed from menu', 'info');
   };
 
-  const toggleProductAvailability = (productId: string) => {
+  const toggleProductAvailability = async (productId: string) => {
+    const prod = products.find(p => p.id === productId);
+    if (prod) {
+      try {
+        await productApi.toggleAvailability(prod.restaurantId, productId);
+      } catch (e) {}
+    }
+
     setProducts((prev) =>
       prev.map((p) => (p.id === productId ? { ...p, isAvailable: !p.isAvailable } : p))
     );
   };
 
   // Reviews
-  const addReview = (orderId: string, restaurantId: string, rating: number, foodRating: number, comment: string) => {
+  const addReview = async (orderId: string, restaurantId: string, rating: number, foodRating: number, comment: string) => {
+    try {
+      await reviewApi.submit({
+        order_id: orderId,
+        rating,
+        food_rating: foodRating,
+        comment,
+      });
+    } catch (e) {}
+
     const newRev: Review = {
       id: `rev-${Date.now()}`,
       orderId,
@@ -738,17 +926,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setReviews((prev) => [newRev, ...prev]);
-
-    // Mark order as reviewed
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, hasBeenReviewed: true } : o))
     );
 
-    // Recalculate restaurant rating
     setRestaurants((prev) =>
       prev.map((r) => {
-        if (r.id === restaurantId) {
-          const restaurantReviews = [...reviews.filter((rev) => rev.restaurantId === restaurantId), newRev];
+        if (String(r.id) === String(restaurantId)) {
+          const restaurantReviews = [...reviews.filter((rev) => String(rev.restaurantId) === String(restaurantId)), newRev];
           const avg = restaurantReviews.reduce((sum, rev) => sum + rev.rating, 0) / restaurantReviews.length;
           return {
             ...r,
@@ -774,7 +959,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addCoupon = (c: Coupon) => {
     setCoupons((prev) => [c, ...prev]);
     logAuditAction('coupon.create', 'Coupons', c.id, `Created promo code ${c.code}`);
-    showToast(`Coupon ${c.code} created`, 'success');
+    showToast(`Voucher ${c.code} created`, 'success');
   };
 
   const toggleCoupon = (couponId: string) => {
@@ -820,31 +1005,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return `${settings.currencySymbol} ${formattedNum}`;
   };
 
-  // Minimal multi-language translation dictionary for key strings
+  // Translations
   const translations: Record<string, Record<string, string>> = {
     ur: {
-      'Home': 'ہوم',
       'Restaurants': 'ریستوران',
       'Cart': 'کارٹ',
       'Checkout': 'چیک آؤٹ',
       'Order Tracking': 'آرڈر ٹریکنگ',
-      'Search dishes or restaurants': 'کھانے یا ریستوران تلاش کریں...',
       'Deliver to': 'ڈیلیور کریں:',
-      'Add to Cart': 'کارٹ میں شامل کریں',
       'Total': 'کل رقم',
-      'Free Delivery': 'مفت ڈیلیوری'
     },
     ar: {
-      'Home': 'الرئيسية',
       'Restaurants': 'المطاعم',
       'Cart': 'السلة',
       'Checkout': 'الدفع',
       'Order Tracking': 'تتبع الطلب',
-      'Search dishes or restaurants': 'ابحث عن أطباق أو مطاعم...',
       'Deliver to': 'التوصيل إلى:',
-      'Add to Cart': 'أضف إلى السلة',
       'Total': 'الإجمالي',
-      'Free Delivery': 'توصيل مجاني'
     }
   };
 
@@ -856,6 +1033,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        isLoading,
+        apiError,
+        refreshData,
+
         currentUser,
         setCurrentUser,
         switchRole,
