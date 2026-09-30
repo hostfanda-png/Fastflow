@@ -17,6 +17,15 @@ All notable changes to the Fastflow Marketplace project will be documented in th
 - **Live Restaurant Dashboard Metrics**: Authoritative database queries for today's orders, revenue, preparing/ready tickets, average order value, and active items.
 - **Comprehensive Feature Test Suite**: Added `backend/tests/Feature/RestaurantManagementTest.php` covering authorization, isolation, status immutability, and opening hours.
 
+### Fixed & Stabilized (Phase 2A Audit & Stabilization)
+- **Implemented `authorizeOwnerAccess()` in `OwnerRestaurantController`**: Fixed critical runtime exception where missing method broke profile and media updates, ensuring staff cannot modify owner settings.
+- **Normalized Time Comparison in `Restaurant::isOpen()`**: Standardized all opening/closing hour timestamps to `HH:MM:SS` format, resolving subtle lexicographical comparison failures with variable length time strings.
+- **Overnight Schedule Spanning Midnight**: Correctly handled overnight shifts extending into the subsequent day across both primary and split shift configurations.
+- **Multi-Tenant Zone Isolation**: Hardened delivery zone update and delete endpoints with strict restaurant ownership verification, returning 404 on cross-restaurant zone IDOR tampering.
+- **Kitchen Order Status Protection**: Enforced strict state transitions preventing restaurants from prematurely marking orders as `delivered` or `refunded`.
+- **Media Upload Sanitization**: Added gallery document storage, rejected unsafe protocols, and enforced raster MIME types (JPEG, PNG, WEBP).
+- **Test Suite Expansion**: Added comprehensive tests for split shifts, overnight schedules, zone isolation, staff restriction, and order status boundaries.
+
 ---
 
 ## [1.1.0] - 2026-09-29

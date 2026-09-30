@@ -374,4 +374,216 @@ class RestaurantManagementTest extends TestCase
         $restaurant->save();
         $this->assertFalse($restaurant->isOpen($wednesdayOpen));
     }
+
+    public function test_split_shift_and_overnight_is_open_calculation(): void
+    {
+        $owner = User::factory()->create(['role_id' => $this->ownerRole->id]);
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Split Shift Bistro',
+            'slug' => 'split-shift-bistro',
+            'address' => 'MM Alam Road',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.52,
+            'lng' => 74.35,
+            'status' => 'approved',
+            'is_active' => true,
+            'is_open' => true,
+        ]);
+
+        // Thursday: Split shift (11:00-15:00, 18:00-23:00)
+        RestaurantHour::create([
+            'restaurant_id' => $restaurant->id,
+            'day_of_week' => 'thursday',
+            'open_time' => '11:00:00',
+            'close_time' => '15:00:00',
+            'open_time_2' => '18:00:00',
+            'close_time_2' => '23:00:00',
+            'is_closed' => false,
+        ]);
+
+        // Friday: Overnight shift (22:00 to 02:00 next morning)
+        RestaurantHour::create([
+            'restaurant_id' => $restaurant->id,
+            'day_of_week' => 'friday',
+            'open_time' => '22:00:00',
+            'close_time' => '02:00:00',
+            'is_closed' => false,
+        ]);
+
+        // 1. Thursday during primary shift (13:00) -> OPEN
+        $thursdayShift1 = Carbon::parse('2026-10-08 13:00:00'); // Thursday
+        $this->assertTrue($restaurant->isOpen($thursdayShift1));
+
+        // 2. Thursday between shifts (16:30) -> CLOSED
+        $thursdayBetween = Carbon::parse('2026-10-08 16:30:00');
+        $this->assertFalse($restaurant->isOpen($thursdayBetween));
+
+        // 3. Thursday during second shift (20:00) -> OPEN
+        $thursdayShift2 = Carbon::parse('2026-10-08 20:00:00');
+        $this->assertTrue($restaurant->isOpen($thursdayShift2));
+
+        // 4. Thursday after closing (23:30) -> CLOSED
+        $thursdayAfter = Carbon::parse('2026-10-08 23:30:00');
+        $this->assertFalse($restaurant->isOpen($thursdayAfter));
+
+        // 5. Friday overnight: late night (23:30 Friday) -> OPEN
+        $fridayNight = Carbon::parse('2026-10-09 23:30:00'); // Friday
+        $this->assertTrue($restaurant->isOpen($fridayNight));
+
+        // 6. Friday overnight: early morning next day (01:15 Saturday) -> OPEN
+        $saturdayMorningOvernight = Carbon::parse('2026-10-10 01:15:00'); // Saturday
+        $this->assertTrue($restaurant->isOpen($saturdayMorningOvernight));
+
+        // 7. Saturday after overnight shift ended (03:00 Saturday) -> CLOSED
+        $saturdayMorningClosed = Carbon::parse('2026-10-10 03:00:00');
+        $this->assertFalse($restaurant->isOpen($saturdayMorningClosed));
+    }
+
+    public function test_owner_cannot_modify_or_delete_other_restaurant_zone(): void
+    {
+        $ownerA = User::factory()->create(['role_id' => $this->ownerRole->id]);
+        $ownerB = User::factory()->create(['role_id' => $this->ownerRole->id]);
+
+        $restaurantA = Restaurant::create([
+            'owner_id' => $ownerA->id,
+            'name' => 'Restaurant A',
+            'slug' => 'restaurant-a',
+            'address' => 'Street A',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $restaurantB = Restaurant::create([
+            'owner_id' => $ownerB->id,
+            'name' => 'Restaurant B',
+            'slug' => 'restaurant-b',
+            'address' => 'Street B',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $zoneB = RestaurantDeliveryZone::create([
+            'restaurant_id' => $restaurantB->id,
+            'zone_name' => 'Zone B Only',
+            'delivery_fee' => 150.00,
+            'min_order' => 500.00,
+            'is_active' => true,
+        ]);
+
+        // Owner A attempts to update Restaurant B's zone using Restaurant A's route
+        $response = $this->actingAs($ownerA, 'sanctum')
+            ->putJson("/api/v1/owner/restaurants/{$restaurantA->id}/delivery-zones/{$zoneB->id}", [
+                'zone_name' => 'Hijacked Zone',
+                'delivery_fee' => 0.00,
+                'min_order' => 10.00,
+            ]);
+
+        $response->assertStatus(404);
+
+        // Owner A attempts to delete Restaurant B's zone
+        $deleteResponse = $this->actingAs($ownerA, 'sanctum')
+            ->deleteJson("/api/v1/owner/restaurants/{$restaurantA->id}/delivery-zones/{$zoneB->id}");
+
+        $deleteResponse->assertStatus(404);
+        $this->assertDatabaseHas('restaurant_delivery_zones', ['id' => $zoneB->id]);
+    }
+
+    public function test_staff_cannot_update_restaurant_profile_or_media(): void
+    {
+        $staffRole = Role::firstOrCreate(['name' => 'restaurant_staff'], ['display_name' => 'Kitchen Staff']);
+        $owner = User::factory()->create(['role_id' => $this->ownerRole->id]);
+
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Kitchen Staff Venue',
+            'slug' => 'kitchen-staff-venue',
+            'address' => 'Mall 1',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $staff = User::factory()->create([
+            'role_id' => $staffRole->id,
+            'restaurant_id' => $restaurant->id,
+        ]);
+
+        // Staff attempts to update restaurant profile settings -> DENIED (403)
+        $updateResponse = $this->actingAs($staff, 'sanctum')
+            ->putJson("/api/v1/owner/restaurants/{$restaurant->id}", [
+                'name' => 'Staff Renamed Venue',
+            ]);
+
+        $updateResponse->assertStatus(403);
+
+        // Staff attempts to upload media -> DENIED (403)
+        $mediaResponse = $this->actingAs($staff, 'sanctum')
+            ->postJson("/api/v1/owner/restaurants/{$restaurant->id}/media", [
+                'type' => 'logo',
+                'image_url' => 'https://example.com/logo.png',
+            ]);
+
+        $mediaResponse->assertStatus(403);
+    }
+
+    public function test_kitchen_cannot_transition_to_invalid_order_status(): void
+    {
+        $owner = User::factory()->create(['role_id' => $this->ownerRole->id]);
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Burger Bar',
+            'slug' => 'burger-bar',
+            'address' => 'Road 1',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $order = Order::create([
+            'order_number' => 'ORD-TEST-KITCHEN-01',
+            'customer_id' => $owner->id,
+            'restaurant_id' => $restaurant->id,
+            'customer_name' => 'Test Customer',
+            'delivery_address' => 'Street 10',
+            'subtotal' => 800.00,
+            'delivery_fee' => 100.00,
+            'tax' => 40.00,
+            'discount' => 0.00,
+            'tip' => 0.00,
+            'grand_total' => 940.00,
+            'order_status' => 'confirmed',
+            'payment_status' => 'pending',
+            'payment_method' => 'cod',
+        ]);
+
+        // Restaurant kitchen attempts to transition to 'delivered' directly -> REJECTED (422)
+        $response = $this->actingAs($owner, 'sanctum')
+            ->putJson("/api/v1/owner/restaurants/{$restaurant->id}/orders/{$order->id}/status", [
+                'status' => 'delivered',
+            ]);
+
+        $response->assertStatus(422);
+
+        // Transition to valid kitchen status 'preparing' -> ALLOWED (200)
+        $validResponse = $this->actingAs($owner, 'sanctum')
+            ->putJson("/api/v1/owner/restaurants/{$restaurant->id}/orders/{$order->id}/status", [
+                'status' => 'preparing',
+            ]);
+
+        $validResponse->assertStatus(200);
+        $order->refresh();
+        $this->assertEquals('preparing', $order->order_status);
+    }
 }

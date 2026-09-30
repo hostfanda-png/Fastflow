@@ -30,7 +30,6 @@ class RestaurantUpdateRequest extends FormRequest
             'delivery_fee' => 'sometimes|numeric|min:0|max:10000',
             'delivery_enabled' => 'sometimes|boolean',
             'is_open' => 'sometimes|boolean',
-            'is_active' => 'sometimes|boolean',
             'address' => 'sometimes|string|max:255',
             'city' => 'sometimes|string|max:100',
             'area' => 'sometimes|string|max:100',

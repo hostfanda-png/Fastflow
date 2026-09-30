@@ -36,14 +36,21 @@ class RestaurantHoursUpdateRequest extends FormRequest
                 if (!$isClosed) {
                     if (empty($slot['open_time']) || empty($slot['close_time'])) {
                         $validator->errors()->add("hours.{$index}.open_time", "Opening and closing times are required for {$day} when not closed.");
+                    } elseif ($slot['open_time'] === $slot['close_time']) {
+                        $validator->errors()->add("hours.{$index}.close_time", "Closing time cannot be identical to opening time for {$day}.");
                     }
 
                     // Check split shift validation if provided
                     if (!empty($slot['open_time_2']) || !empty($slot['close_time_2'])) {
                         if (empty($slot['open_time_2']) || empty($slot['close_time_2'])) {
                             $validator->errors()->add("hours.{$index}.open_time_2", "Both start and end times are required for split shift on {$day}.");
-                        } elseif (!empty($slot['close_time']) && $slot['open_time_2'] < $slot['close_time'] && $slot['open_time'] <= $slot['close_time']) {
-                            $validator->errors()->add("hours.{$index}.open_time_2", "Split shift on {$day} cannot overlap with or start before the primary shift.");
+                        } elseif ($slot['open_time_2'] === $slot['close_time_2']) {
+                            $validator->errors()->add("hours.{$index}.close_time_2", "Split shift closing time cannot be identical to opening time for {$day}.");
+                        } elseif (!empty($slot['close_time']) && !empty($slot['open_time']) && $slot['open_time'] < $slot['close_time']) {
+                            // Primary shift is standard daytime
+                            if ($slot['open_time_2'] <= $slot['close_time']) {
+                                $validator->errors()->add("hours.{$index}.open_time_2", "Split shift on {$day} must start after primary shift closes.");
+                            }
                         }
                     }
                 }

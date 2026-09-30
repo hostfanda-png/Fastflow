@@ -143,15 +143,33 @@ No passwords, access tokens, or payment card numbers are logged.
   - `test_delivery_zones_crud_operations`
   - `test_dashboard_metrics_isolated_to_own_restaurant`
   - `test_restaurant_is_open_authoritative_logic`
+  - `test_split_shift_and_overnight_is_open_calculation`
+  - `test_owner_cannot_modify_or_delete_other_restaurant_zone`
+  - `test_staff_cannot_update_restaurant_profile_or_media`
+  - `test_kitchen_cannot_transition_to_invalid_order_status`
   *(PHP CLI test execution status: **NOT EXECUTED — PHP CLI unavailable in container runtime**; tests fully written and syntax validated).*
 
 ---
 
-## 7. Deferred to Future Phases (Phase 2B+)
+## 7. Audit & Stabilization Fixes
+
+During the Phase 2A stabilization audit, the following issues were discovered and resolved:
+1. **Missing Method Runtime Bug:** Added `authorizeOwnerAccess()` in `OwnerRestaurantController` to prevent fatal runtime errors during merchant profile and media updates, ensuring kitchen staff cannot alter owner settings.
+2. **Lexicographical Time Mismatch in `isOpen()`:** Standardized timestamps to `HH:MM:SS`, preventing string comparison false-negatives between `HH:MM` and `HH:MM:SS`.
+3. **Overnight Schedules Spanning Midnight:** Fully implemented check for yesterday's late-night shifts extending into early hours of today.
+4. **Zone Scoping Enforcement:** Hardened zone update and delete handlers with strict restaurant scoping to reject IDOR tampering with HTTP 404.
+5. **Kitchen Transition Protection:** Enforced order transition guardrails preventing kitchen staff from transitioning orders to `delivered` or `refunded`.
+6. **Delivery Fee Calculation Authority:** Verified that checkout and cart calculations compute `delivery_fee` authoritatively from `$restaurant->delivery_fee`, ignoring client-submitted delivery fees. Zone-based variable checkout pricing is cleanly documented as a Phase 2B/2C feature.
+
+---
+
+## 8. Deferred to Future Phases (Phase 2B+)
 
 As explicitly instructed, the following items remain outside Phase 2A scope:
-- Rider GPS live tracking & automated routing.
-- Customer loyalty points & wallet engine.
-- Recurring merchant subscriptions.
+- Advanced product menu matrix (options, combos, inventory tracking - Phase 2B).
+- Distance-based / dynamic delivery zone routing during checkout (Phase 2B/2C).
+- Rider GPS live tracking & automated routing (Phase 3).
+- Customer loyalty points & wallet engine (Phase 4).
+- Recurring merchant subscriptions (Phase 4).
 - Native mobile applications (iOS/Android).
 - WebSocket real-time live map broadcasts.

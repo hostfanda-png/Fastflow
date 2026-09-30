@@ -135,45 +135,78 @@ class Restaurant extends Model
         }
 
         $now = $checkTime ?: now();
-        $dayName = strtolower($now->format('l')); // monday, tuesday, etc.
-        $todayHour = $hours->firstWhere('day_of_week', $dayName);
-
-        if (!$todayHour || $todayHour->is_closed) {
-            return false;
-        }
-
         $currentTime = $now->format('H:i:s');
+        $todayName = strtolower($now->format('l'));
+        $todayHour = $hours->firstWhere('day_of_week', $todayName);
 
-        // Check primary shift (slot 1)
-        if ($todayHour->open_time && $todayHour->close_time) {
-            $open = $todayHour->open_time;
-            $close = $todayHour->close_time;
+        // Normalize time strings to HH:MM:SS to ensure safe lexicographical comparison
+        $normalizeTime = function (?string $time): ?string {
+            if (!$time) return null;
+            $t = trim($time);
+            if (strlen($t) === 5) {
+                return $t . ':00';
+            }
+            return substr($t, 0, 8);
+        };
 
-            if ($open <= $close) {
-                // Standard daytime hours (e.g. 10:00:00 to 22:00:00)
-                if ($currentTime >= $open && $currentTime <= $close) {
+        // Check if currently open via yesterday's overnight shift
+        $yesterdayName = strtolower($now->copy()->subDay()->format('l'));
+        $yesterdayHour = $hours->firstWhere('day_of_week', $yesterdayName);
+
+        if ($yesterdayHour && !$yesterdayHour->is_closed) {
+            $yOpen = $normalizeTime($yesterdayHour->open_time);
+            $yClose = $normalizeTime($yesterdayHour->close_time);
+
+            // Check overnight primary shift (e.g. 22:00:00 to 02:00:00)
+            if ($yOpen && $yClose && $yOpen > $yClose) {
+                if ($currentTime <= $yClose) {
                     return true;
                 }
-            } else {
-                // Overnight hours (e.g. 18:00:00 to 02:00:00 next morning)
-                if ($currentTime >= $open || $currentTime <= $close) {
+            }
+
+            // Check overnight split shift
+            $yOpen2 = $normalizeTime($yesterdayHour->open_time_2);
+            $yClose2 = $normalizeTime($yesterdayHour->close_time_2);
+            if ($yOpen2 && $yClose2 && $yOpen2 > $yClose2) {
+                if ($currentTime <= $yClose2) {
                     return true;
                 }
             }
         }
 
-        // Check split shift (slot 2) if configured
-        if (!empty($todayHour->open_time_2) && !empty($todayHour->close_time_2)) {
-            $open2 = $todayHour->open_time_2;
-            $close2 = $todayHour->close_time_2;
+        // Check today's configured shifts
+        if ($todayHour && !$todayHour->is_closed) {
+            // Check primary shift
+            if ($todayHour->open_time && $todayHour->close_time) {
+                $open = $normalizeTime($todayHour->open_time);
+                $close = $normalizeTime($todayHour->close_time);
 
-            if ($open2 <= $close2) {
-                if ($currentTime >= $open2 && $currentTime <= $close2) {
-                    return true;
+                if ($open <= $close) {
+                    // Standard daytime hours (e.g. 10:00:00 to 22:00:00)
+                    if ($currentTime >= $open && $currentTime <= $close) {
+                        return true;
+                    }
+                } else {
+                    // Overnight hours starting today (e.g. 22:00:00 to 02:00:00 next day)
+                    if ($currentTime >= $open) {
+                        return true;
+                    }
                 }
-            } else {
-                if ($currentTime >= $open2 || $currentTime <= $close2) {
-                    return true;
+            }
+
+            // Check split shift
+            if (!empty($todayHour->open_time_2) && !empty($todayHour->close_time_2)) {
+                $open2 = $normalizeTime($todayHour->open_time_2);
+                $close2 = $normalizeTime($todayHour->close_time_2);
+
+                if ($open2 <= $close2) {
+                    if ($currentTime >= $open2 && $currentTime <= $close2) {
+                        return true;
+                    }
+                } else {
+                    if ($currentTime >= $open2) {
+                        return true;
+                    }
                 }
             }
         }

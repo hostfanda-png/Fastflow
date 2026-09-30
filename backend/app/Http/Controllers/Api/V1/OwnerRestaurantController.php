@@ -176,12 +176,12 @@ class OwnerRestaurantController extends Controller
     }
 
     /**
-     * Update restaurant profile settings (cannot change commission or approval status).
+     * Update restaurant profile settings (cannot change commission, approval, or active status).
      */
     public function update(RestaurantUpdateRequest $request, int $restaurantId): JsonResponse
     {
         $user = $request->user();
-        $this->authorizeRestaurantAccess($user, $restaurantId);
+        $this->authorizeOwnerAccess($user, $restaurantId);
 
         $restaurant = Restaurant::findOrFail($restaurantId);
         $validated = $request->validated();
@@ -203,7 +203,6 @@ class OwnerRestaurantController extends Controller
             'estimated_delivery_time',
             'delivery_enabled',
             'is_open',
-            'is_active',
             'service_radius_km',
             'logo',
             'cover_image',
@@ -248,7 +247,7 @@ class OwnerRestaurantController extends Controller
     public function uploadMedia(RestaurantMediaRequest $request, int $restaurantId): JsonResponse
     {
         $user = $request->user();
-        $this->authorizeRestaurantAccess($user, $restaurantId);
+        $this->authorizeOwnerAccess($user, $restaurantId);
 
         $restaurant = Restaurant::findOrFail($restaurantId);
         $validated = $request->validated();
@@ -259,11 +258,15 @@ class OwnerRestaurantController extends Controller
         if ($request->hasFile('file')) {
             $file = $request->file('file');
 
-            // Explicit extension and mime verification
-            $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'svg'];
+            // Explicit extension and mime verification (strictly raster images)
+            $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+            $allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+
             $extension = strtolower($file->getClientOriginalExtension());
-            if (!in_array($extension, $allowedExtensions)) {
-                return $this->sendError('Invalid image file format. Allowed: JPG, PNG, WEBP, SVG', [], 422);
+            $mime = $file->getMimeType();
+
+            if (!in_array($extension, $allowedExtensions) || !in_array($mime, $allowedMimes)) {
+                return $this->sendError('Invalid image file format or MIME type. Allowed formats: JPG, PNG, WEBP', [], 422);
             }
 
             // Safe filename without path traversal
@@ -276,19 +279,30 @@ class OwnerRestaurantController extends Controller
             $file->move($destinationDir, $safeName);
             $imageUrl = "/uploads/restaurants/{$safeName}";
         } elseif (!empty($validated['image_url'])) {
-            // URL provided directly
-            $imageUrl = strip_tags($validated['image_url']);
+            // URL provided directly (must be http/https or /uploads/)
+            $candidateUrl = trim(strip_tags($validated['image_url']));
+            if (!preg_match('/^(https?:\/\/|\/uploads\/)/i', $candidateUrl)) {
+                return $this->sendError('Invalid image URL protocol. Only HTTP, HTTPS, or local upload paths allowed.', [], 422);
+            }
+            $imageUrl = $candidateUrl;
         } else {
             return $this->sendError('No image file or URL provided', [], 422);
         }
 
         if ($type === 'logo') {
             $restaurant->logo = $imageUrl;
+            $restaurant->save();
         } elseif ($type === 'cover_image') {
             $restaurant->cover_image = $imageUrl;
+            $restaurant->save();
+        } elseif ($type === 'gallery') {
+            \App\Models\RestaurantDocument::create([
+                'restaurant_id' => $restaurant->id,
+                'document_type' => 'gallery',
+                'file_path' => $imageUrl,
+                'status' => 'approved',
+            ]);
         }
-
-        $restaurant->save();
 
         AuditService::log(
             'restaurant_media_updated',
@@ -433,9 +447,11 @@ class OwnerRestaurantController extends Controller
     /**
      * Update an existing delivery zone.
      */
-    public function updateDeliveryZone(RestaurantDeliveryZoneRequest $request, int $restaurantId, int $zoneId): JsonResponse
+    public function updateDeliveryZone(RestaurantDeliveryZoneRequest $request, $restaurantId, $zoneId): JsonResponse
     {
         $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $zoneId = $zoneId instanceof RestaurantDeliveryZone ? $zoneId->id : (int)$zoneId;
         $this->authorizeRestaurantAccess($user, $restaurantId);
 
         $zone = RestaurantDeliveryZone::where('restaurant_id', $restaurantId)->findOrFail($zoneId);
@@ -455,9 +471,11 @@ class OwnerRestaurantController extends Controller
     /**
      * Delete an existing delivery zone.
      */
-    public function deleteDeliveryZone(Request $request, int $restaurantId, int $zoneId): JsonResponse
+    public function deleteDeliveryZone(Request $request, $restaurantId, $zoneId): JsonResponse
     {
         $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $zoneId = $zoneId instanceof RestaurantDeliveryZone ? $zoneId->id : (int)$zoneId;
         $this->authorizeRestaurantAccess($user, $restaurantId);
 
         $zone = RestaurantDeliveryZone::where('restaurant_id', $restaurantId)->findOrFail($zoneId);
@@ -641,9 +659,11 @@ class OwnerRestaurantController extends Controller
     /**
      * Transition kitchen order status.
      */
-    public function updateOrderStatus(Request $request, int $restaurantId, int $orderId): JsonResponse
+    public function updateOrderStatus(Request $request, $restaurantId, $orderId): JsonResponse
     {
         $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $orderId = $orderId instanceof Order ? $orderId->id : (int)$orderId;
         $this->authorizeRestaurantAccess($user, $restaurantId);
 
         $order = Order::where('restaurant_id', $restaurantId)->findOrFail($orderId);
@@ -675,6 +695,23 @@ class OwnerRestaurantController extends Controller
 
         if (!$isOwner && !$isStaff) {
             abort(403, 'Unauthorized access to this restaurant. IDOR protection enforced.');
+        }
+    }
+
+    /**
+     * Multi-tenant IDOR protection: Verify user owns the restaurant (or is super admin).
+     * Staff cannot modify restaurant profile, financials, or upload media.
+     */
+    protected function authorizeOwnerAccess($user, int $restaurantId): void
+    {
+        if ($user->hasRole('super_admin')) {
+            return;
+        }
+
+        $isOwner = Restaurant::where('id', $restaurantId)->where('owner_id', $user->id)->exists();
+
+        if (!$isOwner) {
+            abort(403, 'Unauthorized access: only the restaurant owner or administrator can modify restaurant settings.');
         }
     }
 }

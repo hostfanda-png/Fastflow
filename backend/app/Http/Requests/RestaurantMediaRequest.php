@@ -16,8 +16,8 @@ class RestaurantMediaRequest extends FormRequest
     {
         return [
             'type' => ['required', 'string', 'in:logo,cover_image,gallery'],
-            'file' => ['nullable', 'file', 'mimes:jpeg,png,jpg,webp,svg', 'max:5120'],
-            'image_url' => ['nullable', 'string', 'max:1000'],
+            'file' => ['nullable', 'file', 'mimes:jpeg,png,jpg,webp', 'max:5120'],
+            'image_url' => ['nullable', 'string', 'max:1000', 'regex:/^(https?:\\/\\/|\\/)/i'],
         ];
     }
 }
