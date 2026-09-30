@@ -629,11 +629,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   } : {
     subtotal: cart.reduce((sum, item) => sum + item.itemTotal, 0),
     discount: 0,
-    deliveryFee: cartRestaurant ? cartRestaurant.deliveryFee : settings.baseDeliveryFee,
+    deliveryFee: cartRestaurant ? (cartRestaurant.deliveryFee ?? 120) : settings.baseDeliveryFee,
     tax: Math.round((cart.reduce((sum, item) => sum + item.itemTotal, 0) * settings.taxPercentage) / 100),
     serviceFee: cart.length > 0 ? settings.serviceFee : 0,
     tip: riderTip,
-    grandTotal: Math.max(0, cart.reduce((sum, item) => sum + item.itemTotal, 0) + (cartRestaurant ? cartRestaurant.deliveryFee : settings.baseDeliveryFee) + Math.round((cart.reduce((sum, item) => sum + item.itemTotal, 0) * settings.taxPercentage) / 100) + (cart.length > 0 ? settings.serviceFee : 0) + riderTip)
+    grandTotal: Math.max(0, cart.reduce((sum, item) => sum + item.itemTotal, 0) + (cartRestaurant ? (cartRestaurant.deliveryFee ?? 120) : settings.baseDeliveryFee) + Math.round((cart.reduce((sum, item) => sum + item.itemTotal, 0) * settings.taxPercentage) / 100) + (cart.length > 0 ? settings.serviceFee : 0) + riderTip)
   };
 
   // Authoritative Server Coupon Application

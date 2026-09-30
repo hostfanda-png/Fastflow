@@ -4,6 +4,21 @@ All notable changes to the Fastflow Marketplace project will be documented in th
 
 ---
 
+## [2.0.0-phase2a] - 2026-09-30
+
+### Added - Restaurant Management Foundation (Phase 2A)
+- **Authoritative `isOpen()` Evaluation**: Implemented backend open/closed determination considering administrative approval, active state, manual store pause, and 7-day operating hours including split shifts and overnight schedules.
+- **Partner Application Onboarding**: Added `POST /api/v1/restaurant/apply` endpoint for authenticated applicants with automatic `pending` status initialization.
+- **Strict Merchant IDOR Protection**: Enforced tenant scoping on all `/api/v1/owner/*` routes via `OwnerRestaurantController` and `RestaurantPolicy`, rejecting customer and courier access with HTTP 403.
+- **7-Day Operating Hours Management**: Added endpoints and validation for managing weekly opening hours with split shift support (`open_time_2`, `close_time_2`) and overlap prevention.
+- **Delivery Zone Management**: Implemented full CRUD for restaurant delivery zones with localized delivery fees and minimum order amounts.
+- **Central Cuisines Management**: Added `GET /api/v1/cuisines` endpoint seeded with standard marketplace cuisines and many-to-many relationship syncing.
+- **Secure Media Assets Upload**: Supported validated logo and cover image uploads with strict MIME checks, size limits, and safe filename hashing.
+- **Live Restaurant Dashboard Metrics**: Authoritative database queries for today's orders, revenue, preparing/ready tickets, average order value, and active items.
+- **Comprehensive Feature Test Suite**: Added `backend/tests/Feature/RestaurantManagementTest.php` covering authorization, isolation, status immutability, and opening hours.
+
+---
+
 ## [1.1.0] - 2026-09-29
 
 ### Security & Hardening (Phase 1 Final Completion)

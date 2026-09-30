@@ -63,6 +63,7 @@ Base URL: `http://localhost:8000/api/v1` (or configured `VITE_API_URL`)
 | `/restaurants` | `GET` | `city`, `area`, `search`, `category`, `cuisine` | Approved and active restaurant list |
 | `/restaurants/{id}` | `GET` | - | Details with menu products, variants, addons |
 | `/categories` | `GET` | - | Active menu categories |
+| `/cuisines` | `GET` | - | Centrally managed cuisine categories |
 | `/coupons` | `GET` | - | Public promotional vouchers |
 | `/coupons/validate` | `POST` | `{ "code": "FAST50", "subtotal": 1200 }` | Server-authoritative coupon check |
 
@@ -80,6 +81,7 @@ Base URL: `http://localhost:8000/api/v1` (or configured `VITE_API_URL`)
 | `/orders` | `GET` | Customer order history |
 | `/orders/{id}` | `GET` | Real-time order progress & status timeline |
 | `/orders/{id}/cancel` | `POST` | Cancel pending order |
+| `/restaurant/apply` | `POST` | Submit restaurant partner application (pending status) |
 
 ---
 
@@ -87,13 +89,23 @@ Base URL: `http://localhost:8000/api/v1` (or configured `VITE_API_URL`)
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/owner/restaurants` | `GET` | Outlets owned by authenticated user |
-| `/owner/restaurants/{id}` | `GET` | Operational dashboard for specified restaurant |
+| `/owner/restaurants` | `GET` | Outlets owned by or assigned to authenticated user |
+| `/owner/restaurants` | `POST` | Submit partner registration application |
+| `/owner/restaurants/{id}` | `GET` | Operational dashboard and venue details |
+| `/owner/restaurants/{id}` | `PUT` | Update store profile, location, and delivery settings |
+| `/owner/restaurants/{id}/dashboard` | `GET` | Authoritative KPI stats, today's revenue, active tickets |
+| `/owner/restaurants/{id}/media` | `POST` | Upload and assign logo or cover banner image |
+| `/owner/restaurants/{id}/hours` | `GET` | 7-day operating hours schedule |
+| `/owner/restaurants/{id}/hours` | `PUT` | Update 7-day operating hours and split shifts |
+| `/owner/restaurants/{id}/delivery-zones` | `GET` | List configured localized delivery zones |
+| `/owner/restaurants/{id}/delivery-zones` | `POST` | Create new delivery zone |
+| `/owner/restaurants/{id}/delivery-zones/{zid}` | `PUT` | Update delivery zone parameters |
+| `/owner/restaurants/{id}/delivery-zones/{zid}` | `DELETE` | Remove delivery zone |
 | `/owner/restaurants/{id}/orders` | `GET` | Kitchen orders queue |
 | `/owner/restaurants/{id}/orders/{oid}/status` | `PUT` | Status transition (`confirmed`, `preparing`, `ready_for_pickup`) |
 | `/owner/restaurants/{id}/products` | `POST` | Create menu item |
 | `/owner/restaurants/{id}/products/{pid}` | `PUT` / `DELETE` | Update / Delete menu item |
-| `/owner/restaurants/{id}/products/{pid}/toggle` | `PATCH` | Toggle availability |
+| `/owner/restaurants/{id}/products/{pid}/toggle` | `PATCH` | Toggle dish stock availability |
 
 ---
 

@@ -44,11 +44,56 @@ class RestaurantPolicy
             return true;
         }
 
-        if ($restaurant->owner_id === $user->id && $user->hasPermission('restaurant.update')) {
+        return (int)$restaurant->owner_id === (int)$user->id;
+    }
+
+    /**
+     * Determine whether the user can manage restaurant operating hours.
+     */
+    public function manageHours(User $user, Restaurant $restaurant): bool
+    {
+        if ($user->hasRole('super_admin')) {
             return true;
         }
 
-        return false;
+        return (int)$restaurant->owner_id === (int)$user->id;
+    }
+
+    /**
+     * Determine whether the user can manage delivery zones.
+     */
+    public function manageDeliveryZones(User $user, Restaurant $restaurant): bool
+    {
+        if ($user->hasRole('super_admin')) {
+            return true;
+        }
+
+        return (int)$restaurant->owner_id === (int)$user->id;
+    }
+
+    /**
+     * Determine whether the user can upload or manage media (logo, cover).
+     */
+    public function manageMedia(User $user, Restaurant $restaurant): bool
+    {
+        if ($user->hasRole('super_admin')) {
+            return true;
+        }
+
+        return (int)$restaurant->owner_id === (int)$user->id;
+    }
+
+    /**
+     * Determine whether the user can view the restaurant dashboard & financial metrics.
+     */
+    public function viewDashboard(User $user, Restaurant $restaurant): bool
+    {
+        if ($user->hasRole('super_admin')) {
+            return true;
+        }
+
+        return (int)$restaurant->owner_id === (int)$user->id || 
+            $restaurant->staff()->where('user_id', $user->id)->exists();
     }
 
     /**
@@ -60,13 +105,11 @@ class RestaurantPolicy
             return true;
         }
 
-        if ($restaurant->owner_id === $user->id) {
+        if ((int)$restaurant->owner_id === (int)$user->id) {
             return true;
         }
 
-        return $restaurant->staff()->where('user_id', $user->id)->whereHas('role', function ($q) {
-            $q->whereIn('name', ['restaurant_owner', 'restaurant_staff']);
-        })->exists();
+        return $restaurant->staff()->where('user_id', $user->id)->exists();
     }
 
     /**

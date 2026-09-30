@@ -13,7 +13,7 @@ class RestaurantController extends Controller
     {
         $query = Restaurant::query()
             ->activeAndApproved()
-            ->with(['cuisines', 'products.variants', 'products.addons']);
+            ->with(['cuisines', 'hours', 'products.variants', 'products.addons']);
 
         // Search query
         if ($search = $request->query('search')) {
@@ -94,7 +94,8 @@ class RestaurantController extends Controller
                 'delivery_fee' => $rest->delivery_fee,
                 'minimum_order' => $rest->minimum_order,
                 'estimated_delivery_time' => $rest->estimated_delivery_time,
-                'is_open' => $rest->is_open,
+                'is_open' => $rest->isOpen(),
+                'delivery_enabled' => (bool)($rest->delivery_enabled ?? true),
                 'is_featured' => $rest->is_featured,
                 'discount_badge' => $rest->discount_badge,
                 'cuisines' => $rest->cuisines->pluck('name')->toArray(),

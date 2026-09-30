@@ -99,6 +99,44 @@ export interface RestaurantOpeningHours {
   close: string;
 }
 
+export interface RestaurantDeliveryZone {
+  id: number | string;
+  restaurant_id?: number | string;
+  zone_name: string;
+  delivery_fee: number;
+  min_order: number;
+  is_active?: boolean;
+}
+
+export interface RestaurantHourSlot {
+  id?: number | string;
+  restaurant_id?: number | string;
+  day_of_week: string;
+  open_time?: string;
+  close_time?: string;
+  open_time_2?: string | null;
+  close_time_2?: string | null;
+  is_closed: boolean;
+}
+
+export interface RestaurantDashboardMetrics {
+  today_orders: number;
+  today_revenue: number;
+  pending_orders: number;
+  preparing_orders: number;
+  ready_orders: number;
+  completed_orders: number;
+  cancelled_orders: number;
+  average_order_value: number;
+  active_menu_items: number;
+}
+
+export interface Cuisine {
+  id: number;
+  name: string;
+  slug: string;
+}
+
 export type RestaurantStatus = 'approved' | 'pending' | 'suspended' | 'rejected';
 
 export interface Restaurant {
@@ -107,6 +145,7 @@ export interface Restaurant {
   slug: string;
   logo: string;
   coverImage: string;
+  cover_image?: string;
   description: string;
   address: string;
   city: string;
@@ -115,21 +154,37 @@ export interface Restaurant {
   lng: number;
   rating: number;
   reviewCount: number;
+  review_count?: number;
   deliveryFee: number;
+  delivery_fee?: number;
   minimumOrder: number;
-  estimatedDeliveryTime: string; // e.g. "25-35 mins"
+  minimum_order?: number;
+  estimatedDeliveryTime: string;
+  estimated_delivery_time?: string;
   isOpen: boolean;
+  is_open?: boolean;
+  is_active?: boolean;
+  delivery_enabled?: boolean;
   isFeatured?: boolean;
+  is_featured?: boolean;
   discountBadge?: string;
-  commissionRate: number; // e.g. 15 for 15%
+  discount_badge?: string;
+  commissionRate: number;
+  commission_rate?: number;
   commissionType: 'percentage' | 'fixed';
+  commission_type?: 'percentage' | 'fixed';
   fixedCommissionAmount?: number;
+  fixed_commission_amount?: number;
   status: RestaurantStatus;
-  cuisines: string[];
+  cuisines: any[];
   phone: string;
   email: string;
-  openingHours: Record<string, RestaurantOpeningHours>;
-  serviceRadiusKm: number;
+  openingHours?: Record<string, RestaurantOpeningHours>;
+  serviceRadiusKm?: number;
+  service_radius_km?: number;
+  products?: Product[];
+  hours?: RestaurantHourSlot[];
+  deliveryZones?: RestaurantDeliveryZone[];
 }
 
 export interface CartItemAddon {

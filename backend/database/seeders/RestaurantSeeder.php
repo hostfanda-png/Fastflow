@@ -122,6 +122,30 @@ class RestaurantSeeder extends Seeder
             $staff->save();
         }
 
+        // Seed Operating Hours & Delivery Zones for all 3 restaurants
+        $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        foreach ([$fuego, $ironGrill, $kyoto] as $seededRest) {
+            foreach ($days as $day) {
+                \App\Models\RestaurantHour::firstOrCreate(
+                    ['restaurant_id' => $seededRest->id, 'day_of_week' => $day],
+                    [
+                        'open_time' => '10:00:00',
+                        'close_time' => '23:00:00',
+                        'is_closed' => false,
+                    ]
+                );
+            }
+
+            \App\Models\RestaurantDeliveryZone::firstOrCreate(
+                ['restaurant_id' => $seededRest->id, 'zone_name' => 'Downtown & Central Delivery Zone'],
+                [
+                    'delivery_fee' => $seededRest->delivery_fee,
+                    'min_order' => $seededRest->minimum_order,
+                    'is_active' => true,
+                ]
+            );
+        }
+
         // Seed 30+ Products across the 3 restaurants
         $productsList = [
             // Fuego (10 items)

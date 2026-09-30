@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\RiderController;
 use App\Http\Controllers\Api\V1\ReviewController;
 use App\Http\Controllers\Api\V1\CouponController;
 use App\Http\Controllers\Api\V1\AdminController;
+use App\Http\Controllers\Api\V1\CuisineController;
 
 Route::prefix('v1')->group(function () {
 
@@ -31,6 +32,7 @@ Route::prefix('v1')->group(function () {
     Route::get('restaurants', [RestaurantController::class, 'index']);
     Route::get('restaurants/{restaurant}', [RestaurantController::class, 'show']);
     Route::get('categories', [MenuController::class, 'getCategories']);
+    Route::get('cuisines', [CuisineController::class, 'index']);
     Route::get('coupons', [CouponController::class, 'index']);
     Route::post('coupons/validate', [CouponController::class, 'validateCoupon']);
 
@@ -73,14 +75,33 @@ Route::prefix('v1')->group(function () {
             Route::delete('addresses/{id}', [CustomerController::class, 'deleteAddress']);
         });
 
+        // Restaurant Partner Application (any authenticated user can apply)
+        Route::post('restaurant/apply', [OwnerRestaurantController::class, 'apply']);
+
         // Reviews
         Route::post('reviews', [ReviewController::class, 'store']);
     });
 
     // Restaurant Owner & Kitchen Staff Routes
-    Route::prefix('owner')->middleware(['auth:sanctum', 'role:restaurant_owner,restaurant_staff'])->group(function () {
+    Route::prefix('owner')->middleware(['auth:sanctum', 'role:restaurant_owner,restaurant_staff,super_admin'])->group(function () {
         Route::get('restaurants', [OwnerRestaurantController::class, 'index']);
+        Route::post('restaurants', [OwnerRestaurantController::class, 'apply']);
         Route::get('restaurants/{restaurant}', [OwnerRestaurantController::class, 'show']);
+        Route::put('restaurants/{restaurant}', [OwnerRestaurantController::class, 'update']);
+        Route::get('restaurants/{restaurant}/dashboard', [OwnerRestaurantController::class, 'dashboard']);
+        Route::post('restaurants/{restaurant}/media', [OwnerRestaurantController::class, 'uploadMedia']);
+
+        // Operating Hours
+        Route::get('restaurants/{restaurant}/hours', [OwnerRestaurantController::class, 'getHours']);
+        Route::put('restaurants/{restaurant}/hours', [OwnerRestaurantController::class, 'updateHours']);
+
+        // Delivery Zones
+        Route::get('restaurants/{restaurant}/delivery-zones', [OwnerRestaurantController::class, 'getDeliveryZones']);
+        Route::post('restaurants/{restaurant}/delivery-zones', [OwnerRestaurantController::class, 'storeDeliveryZone']);
+        Route::put('restaurants/{restaurant}/delivery-zones/{zone}', [OwnerRestaurantController::class, 'updateDeliveryZone']);
+        Route::delete('restaurants/{restaurant}/delivery-zones/{zone}', [OwnerRestaurantController::class, 'deleteDeliveryZone']);
+
+        // Orders
         Route::get('restaurants/{restaurant}/orders', [OwnerRestaurantController::class, 'getOrders']);
         Route::put('restaurants/{restaurant}/orders/{order}/status', [OwnerRestaurantController::class, 'updateOrderStatus']);
         

@@ -39,6 +39,12 @@ class CategoryProductSeeder extends Seeder
             ['name' => 'Burgers', 'slug' => 'burgers'],
             ['name' => 'Sushi', 'slug' => 'sushi'],
             ['name' => 'BBQ', 'slug' => 'bbq'],
+            ['name' => 'Pakistani', 'slug' => 'pakistani'],
+            ['name' => 'Chinese', 'slug' => 'chinese'],
+            ['name' => 'Fast Food', 'slug' => 'fast-food'],
+            ['name' => 'Pizza', 'slug' => 'pizza'],
+            ['name' => 'Desserts', 'slug' => 'desserts'],
+            ['name' => 'Breakfast', 'slug' => 'breakfast'],
         ];
 
         foreach ($cuisines as $c) {
