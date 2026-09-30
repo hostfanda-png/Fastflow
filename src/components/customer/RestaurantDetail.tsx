@@ -41,33 +41,17 @@ export const RestaurantDetail: React.FC<RestaurantDetailProps> = ({ restaurant, 
     try {
       const res = await restaurantApi.getMenu(restaurant.id);
       if (res.success && res.data) {
-        if (res.data.categories && res.data.categories.length > 0) {
-          setMenuCategories(res.data.categories);
-        } else {
-          setMenuCategories(contextCategories);
-        }
-
-        if (res.data.products) {
-          setMenuProducts(res.data.products);
-        } else {
-          // Fallback to context products for this restaurant
-          const filtered = contextProducts.filter(p => String(p.restaurant_id || p.restaurantId) === String(restaurant.id));
-          setMenuProducts(filtered);
-        }
+        setMenuCategories(res.data.categories || []);
+        setMenuProducts(res.data.products || []);
       } else {
-        const filtered = contextProducts.filter(p => String(p.restaurant_id || p.restaurantId) === String(restaurant.id));
-        setMenuProducts(filtered);
-        setMenuCategories(contextCategories);
+        setMenuError(res.message || 'Failed to load restaurant menu from server.');
       }
-    } catch {
-      // Graceful fallback to context products
-      const filtered = contextProducts.filter(p => String(p.restaurant_id || p.restaurantId) === String(restaurant.id));
-      setMenuProducts(filtered);
-      setMenuCategories(contextCategories);
+    } catch (err: any) {
+      setMenuError(err?.response?.data?.message || err?.message || 'Failed to connect to menu service.');
     } finally {
       setLoadingMenu(false);
     }
-  }, [restaurant.id, contextCategories, contextProducts]);
+  }, [restaurant.id]);
 
   useEffect(() => {
     fetchMenu();
@@ -229,7 +213,20 @@ export const RestaurantDetail: React.FC<RestaurantDetailProps> = ({ restaurant, 
       </div>
 
       {/* Menu Grid */}
-      {loadingMenu ? (
+      {menuError ? (
+        <div className="bg-white rounded-2xl border border-red-200 p-8 text-center">
+          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+          <h3 className="text-sm font-bold text-stone-800">Unable to load menu</h3>
+          <p className="text-xs text-stone-500 mt-1 mb-4">{menuError}</p>
+          <button
+            onClick={fetchMenu}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-bold hover:bg-stone-800 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
+        </div>
+      ) : loadingMenu ? (
         <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center flex flex-col items-center gap-2">
           <RefreshCw className="w-6 h-6 animate-spin text-stone-400" />
           <span className="text-xs text-stone-500">Loading dishes from restaurant menu...</span>

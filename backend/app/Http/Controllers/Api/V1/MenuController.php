@@ -361,11 +361,15 @@ class MenuController extends Controller
 
             // Sync Addons if passed
             if (!empty($validated['addons'])) {
-                // Ensure addons belong to this restaurant
+                // Ensure all addons belong strictly to this restaurant
                 $validAddonIds = Addon::where('restaurant_id', $restaurantId)
                     ->whereIn('id', $validated['addons'])
                     ->pluck('id')
                     ->toArray();
+
+                if (count($validAddonIds) !== count($validated['addons'])) {
+                    throw new \InvalidArgumentException('One or more selected add-ons do not belong to this restaurant.');
+                }
                 $product->addons()->sync($validAddonIds);
             }
 
@@ -470,10 +474,15 @@ class MenuController extends Controller
 
             // Sync Addons if passed
             if (array_key_exists('addons', $validated)) {
+                $submittedAddons = $validated['addons'] ?? [];
                 $validAddonIds = Addon::where('restaurant_id', $restaurantId)
-                    ->whereIn('id', $validated['addons'] ?? [])
+                    ->whereIn('id', $submittedAddons)
                     ->pluck('id')
                     ->toArray();
+
+                if (count($validAddonIds) !== count($submittedAddons)) {
+                    throw new \InvalidArgumentException('One or more selected add-ons do not belong to this restaurant.');
+                }
                 $product->addons()->sync($validAddonIds);
             }
         });
@@ -775,6 +784,10 @@ class MenuController extends Controller
             ->whereIn('id', $validated['addon_ids'])
             ->pluck('id')
             ->toArray();
+
+        if (count($validAddonIds) !== count($validated['addon_ids'])) {
+            return $this->sendError('One or more selected add-ons do not belong to this restaurant.', [], 422);
+        }
 
         $product->addons()->sync($validAddonIds);
 

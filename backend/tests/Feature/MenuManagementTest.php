@@ -268,4 +268,59 @@ class MenuManagementTest extends TestCase
                 ]
             ]);
     }
+
+    public function test_cross_restaurant_addon_sync_is_strictly_rejected(): void
+    {
+        $category = Category::create([
+            'restaurant_id' => $this->restaurantA->id,
+            'name' => 'Fast Food',
+            'slug' => 'fast-food-a',
+        ]);
+
+        $productA = Product::create([
+            'restaurant_id' => $this->restaurantA->id,
+            'category_id' => $category->id,
+            'name' => 'Club Sandwich',
+            'slug' => 'club-sandwich-a',
+            'price' => 600.00,
+            'is_available' => true,
+        ]);
+
+        $addonB = Addon::create([
+            'restaurant_id' => $this->restaurantB->id,
+            'name' => 'Foreign Dip B',
+            'price' => 100.00,
+        ]);
+
+        $response = $this->actingAs($this->ownerA, 'sanctum')
+            ->postJson("/api/v1/owner/restaurants/{$this->restaurantA->id}/products/{$productA->id}/addons/sync", [
+                'addon_ids' => [$addonB->id],
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_owner_cannot_modify_or_delete_global_system_categories(): void
+    {
+        $globalCategory = Category::create([
+            'restaurant_id' => null,
+            'name' => 'Global Category',
+            'slug' => 'global-category',
+        ]);
+
+        // Attempt update
+        $updateRes = $this->actingAs($this->ownerA, 'sanctum')
+            ->putJson("/api/v1/owner/restaurants/{$this->restaurantA->id}/categories/{$globalCategory->id}", [
+                'name' => 'Hijacked Global Name',
+            ]);
+
+        $updateRes->assertStatus(404);
+
+        // Attempt delete
+        $deleteRes = $this->actingAs($this->ownerA, 'sanctum')
+            ->deleteJson("/api/v1/owner/restaurants/{$this->restaurantA->id}/categories/{$globalCategory->id}");
+
+        $deleteRes->assertStatus(404);
+    }
 }

@@ -726,40 +726,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Update order status with immutable history
   const updateOrderStatus = async (orderId: string, newStatus: OrderStatus, note?: string) => {
     const now = new Date().toISOString();
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
 
     try {
-      const order = orders.find(o => o.id === orderId);
-      if (order) {
-        await restaurantApi.updateOrderStatus(order.restaurantId, orderId, newStatus, note);
+      const res = await restaurantApi.updateOrderStatus(order.restaurantId, orderId, newStatus, note);
+      if (res.success) {
+        setOrders((prev) =>
+          prev.map((ord) => {
+            if (ord.id === orderId) {
+              const updatedHistory = [
+                ...ord.statusHistory,
+                { status: newStatus, timestamp: now, note, actor: currentUser?.name || 'Staff' }
+              ];
+
+              const updated: Order = {
+                ...ord,
+                orderStatus: newStatus,
+                statusHistory: updatedHistory,
+                paymentStatus: newStatus === 'delivered' ? 'paid' : ord.paymentStatus
+              };
+
+              if (activeOrder?.id === orderId) {
+                setActiveOrder(updated);
+              }
+              return updated;
+            }
+            return ord;
+          })
+        );
+        logAuditAction(`order.${newStatus}`, 'Orders', orderId, note || `Status transitioned to ${newStatus}`);
+      } else {
+        showToast(res.message || 'Failed to update order status on server', 'error');
       }
-    } catch (e) {}
-
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id === orderId) {
-          const updatedHistory = [
-            ...ord.statusHistory,
-            { status: newStatus, timestamp: now, note, actor: currentUser?.name || 'Staff' }
-          ];
-
-          const updated: Order = {
-            ...ord,
-            orderStatus: newStatus,
-            statusHistory: updatedHistory,
-            paymentStatus: newStatus === 'delivered' ? 'paid' : ord.paymentStatus
-          };
-
-          if (activeOrder?.id === orderId) {
-            setActiveOrder(updated);
-          }
-          return updated;
-        }
-        return ord;
-      })
-    );
-
-    logAuditAction(`order.${newStatus}`, 'Orders', orderId, note || `Status transitioned to ${newStatus}`);
-    showToast(`Order status updated to ${newStatus.replace(/_/g, ' ')}`, 'info');
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to update order status on server', 'error');
+    }
   };
 
   // Simulate order step for easy walkthrough
@@ -802,30 +804,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      await orderApi.cancel(orderId, reason);
-    } catch (e) {}
-
-    const now = new Date().toISOString();
-    setOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === orderId) {
-          const updated: Order = {
-            ...o,
-            orderStatus: 'cancelled',
-            cancellationReason: reason,
-            statusHistory: [
-              ...o.statusHistory,
-              { status: 'cancelled', timestamp: now, note: `Cancelled: ${reason}`, actor: currentUser?.name || 'Customer' }
-            ]
-          };
-          if (activeOrder?.id === orderId) setActiveOrder(updated);
-          return updated;
-        }
-        return o;
-      })
-    );
-    showToast(`Order ${ord.orderNumber} cancelled.`, 'info');
-    logAuditAction('order.cancel', 'Orders', orderId, `Cancelled reason: ${reason}`);
+      const res = await orderApi.cancel(orderId, reason);
+      if (res.success) {
+        const now = new Date().toISOString();
+        setOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === orderId) {
+              const updated: Order = {
+                ...o,
+                orderStatus: 'cancelled',
+                cancellationReason: reason,
+                statusHistory: [
+                  ...o.statusHistory,
+                  { status: 'cancelled', timestamp: now, note: `Cancelled: ${reason}`, actor: currentUser?.name || 'Customer' }
+                ]
+              };
+              if (activeOrder?.id === orderId) setActiveOrder(updated);
+              return updated;
+            }
+            return o;
+          })
+        );
+        showToast(`Order ${ord.orderNumber} cancelled.`, 'info');
+        logAuditAction('order.cancel', 'Orders', orderId, `Cancelled reason: ${reason}`);
+      } else {
+        showToast(res.message || 'Failed to cancel order on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to cancel order on server', 'error');
+    }
   };
 
   // Assign rider
@@ -834,56 +841,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!rider) return;
 
     try {
-      await adminApi.assignRider(orderId, riderId);
-    } catch (e) {}
+      const res = await adminApi.assignRider(orderId, riderId);
+      if (res.success) {
+        setOrders((prev) =>
+          prev.map((ord) => {
+            if (ord.id === orderId) {
+              const updated: Order = {
+                ...ord,
+                riderId: rider.id,
+                riderName: rider.name,
+                riderPhone: rider.phone,
+                orderStatus: ord.orderStatus === 'pending' || ord.orderStatus === 'confirmed' || ord.orderStatus === 'ready_for_pickup' 
+                  ? 'assigned_to_rider' 
+                  : ord.orderStatus,
+                statusHistory: [
+                  ...ord.statusHistory,
+                  {
+                    status: 'assigned_to_rider',
+                    timestamp: new Date().toISOString(),
+                    note: `Courier ${rider.name} assigned to delivery`,
+                    actor: currentUser?.name || 'System Dispatcher'
+                  }
+                ]
+              };
+              if (activeOrder?.id === orderId) setActiveOrder(updated);
+              return updated;
+            }
+            return ord;
+          })
+        );
 
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id === orderId) {
-          const updated: Order = {
-            ...ord,
-            riderId: rider.id,
-            riderName: rider.name,
-            riderPhone: rider.phone,
-            orderStatus: ord.orderStatus === 'pending' || ord.orderStatus === 'confirmed' || ord.orderStatus === 'ready_for_pickup' 
-              ? 'assigned_to_rider' 
-              : ord.orderStatus,
-            statusHistory: [
-              ...ord.statusHistory,
-              {
-                status: 'assigned_to_rider',
-                timestamp: new Date().toISOString(),
-                note: `Courier ${rider.name} assigned to delivery`,
-                actor: currentUser?.name || 'System Dispatcher'
-              }
-            ]
-          };
-          if (activeOrder?.id === orderId) setActiveOrder(updated);
-          return updated;
-        }
-        return ord;
-      })
-    );
+        setRiders((prev) =>
+          prev.map((r) => (r.id === riderId ? { ...r, assignedOrderCount: r.assignedOrderCount + 1 } : r))
+        );
 
-    setRiders((prev) =>
-      prev.map((r) => (r.id === riderId ? { ...r, assignedOrderCount: r.assignedOrderCount + 1 } : r))
-    );
-
-    showToast(`Courier ${rider.name} assigned to order.`, 'success');
+        showToast(`Courier ${rider.name} assigned to order.`, 'success');
+      } else {
+        showToast(res.message || 'Failed to assign courier on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to assign courier on server', 'error');
+    }
   };
 
   const autoDispatchRider = async (orderId: string): Promise<boolean> => {
     try {
       const res = await adminApi.autoDispatch(orderId);
       if (res.success) return true;
-    } catch (e) {}
-
-    const availableRiders = riders.filter((r) => r.status === 'available');
-    if (availableRiders.length === 0) return false;
-
-    const bestRider = [...availableRiders].sort((a, b) => a.assignedOrderCount - b.assignedOrderCount)[0];
-    await assignRiderToOrder(orderId, bestRider.id);
-    return true;
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Auto-dispatch failed on server', 'error');
+    }
+    return false;
   };
 
   const currentRider = currentUser && currentUser.role === 'delivery_rider'
@@ -892,13 +900,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateRiderStatus = async (riderId: string, status: Rider['status']) => {
     try {
-      await riderApi.updateStatus(status as any);
-    } catch (e) {}
-
-    setRiders((prev) =>
-      prev.map((r) => (r.id === riderId ? { ...r, status } : r))
-    );
-    showToast(`Courier status set to ${status}`, 'info');
+      const res = await riderApi.updateStatus(status as any);
+      if (res.success) {
+        setRiders((prev) =>
+          prev.map((r) => (r.id === riderId ? { ...r, status } : r))
+        );
+        showToast(`Courier status set to ${status}`, 'info');
+      } else {
+        showToast(res.message || 'Failed to update status on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to update status on server', 'error');
+    }
   };
 
   // Restaurant management
@@ -910,127 +923,130 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setRestaurantStatus = async (id: string, status: Restaurant['status']) => {
     try {
-      await adminApi.setRestaurantStatus(id, status);
-    } catch (e) {}
-
-    setRestaurants((prev) =>
-      prev.map((r) => (String(r.id) === String(id) ? { ...r, status } : r))
-    );
-    logAuditAction(`restaurant.${status}`, 'Restaurants', id, `Changed partner status to ${status}`);
-    showToast(`Restaurant status changed to ${status}`, 'info');
+      const res = await adminApi.setRestaurantStatus(id, status);
+      if (res.success) {
+        setRestaurants((prev) =>
+          prev.map((r) => (String(r.id) === String(id) ? { ...r, status } : r))
+        );
+        logAuditAction(`restaurant.${status}`, 'Restaurants', id, `Changed partner status to ${status}`);
+        showToast(`Restaurant status changed to ${status}`, 'info');
+      } else {
+        showToast(res.message || 'Failed to update restaurant status', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to update restaurant status', 'error');
+    }
   };
 
   const updateCommission = async (id: string, rate: number, type: 'percentage' | 'fixed') => {
     try {
-      await adminApi.updateCommission(id, rate, type);
-    } catch (e) {}
-
-    setRestaurants((prev) =>
-      prev.map((r) => (String(r.id) === String(id) ? { ...r, commissionRate: rate, commissionType: type } : r))
-    );
-    logAuditAction('commission.update', 'Restaurants', id, `Updated commission to ${rate}${type === 'percentage' ? '%' : ' flat'}`);
-    showToast('Commission rate updated', 'success');
+      const res = await adminApi.updateCommission(id, rate, type);
+      if (res.success) {
+        setRestaurants((prev) =>
+          prev.map((r) => (String(r.id) === String(id) ? { ...r, commissionRate: rate, commissionType: type } : r))
+        );
+        logAuditAction('commission.update', 'Restaurants', id, `Updated commission to ${rate}${type === 'percentage' ? '%' : ' flat'}`);
+        showToast('Commission rate updated', 'success');
+      } else {
+        showToast(res.message || 'Failed to update commission rate', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to update commission rate', 'error');
+    }
   };
 
-  // Product management
+  // Product management (Strict Single Source of Truth)
   const addProduct = async (p: Omit<Product, 'id'>) => {
     const restId = p.restaurant_id || p.restaurantId || '';
-    let newProduct: Product;
     try {
       const res = await productApi.create(restId, p);
-      newProduct = res.data;
-    } catch (e) {
-      newProduct = { ...p, id: `prod-${Date.now()}` };
+      if (res.success && res.data) {
+        setProducts((prev) => [res.data, ...prev]);
+        logAuditAction('menu.create', 'Menu', String(res.data.id), `Created dish ${res.data.name}`);
+        showToast(`Added ${res.data.name} to menu`, 'success');
+      } else {
+        showToast(res.message || 'Failed to create dish on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to create dish on server', 'error');
     }
-
-    setProducts((prev) => [newProduct, ...prev]);
-    logAuditAction('menu.create', 'Menu', String(newProduct.id), `Created dish ${newProduct.name}`);
-    showToast(`Added ${newProduct.name} to menu`, 'success');
   };
 
   const updateProduct = async (updated: Product) => {
     const restId = updated.restaurant_id || updated.restaurantId || '';
     try {
-      await productApi.update(restId, updated.id, updated);
-    } catch (e) {}
-
-    setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    logAuditAction('menu.update', 'Menu', String(updated.id), `Updated dish ${updated.name}`);
-    showToast(`Updated ${updated.name}`, 'success');
+      const res = await productApi.update(restId, updated.id, updated);
+      if (res.success && res.data) {
+        setProducts((prev) => prev.map((p) => (String(p.id) === String(updated.id) ? res.data : p)));
+        logAuditAction('menu.update', 'Menu', String(updated.id), `Updated dish ${updated.name}`);
+        showToast(`Updated ${updated.name}`, 'success');
+      } else {
+        showToast(res.message || 'Failed to update dish on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to update dish on server', 'error');
+    }
   };
 
   const deleteProduct = async (productId: string) => {
+    const prod = products.find((p) => String(p.id) === String(productId));
+    if (!prod) return;
+    const restId = prod.restaurant_id || prod.restaurantId || '';
     try {
-      const prod = products.find(p => p.id === productId);
-      if (prod) {
-        const restId = prod.restaurant_id || prod.restaurantId || '';
-        await productApi.delete(restId, productId);
+      const res = await productApi.delete(restId, productId);
+      if (res.success) {
+        setProducts((prev) => prev.filter((p) => String(p.id) !== String(productId)));
+        logAuditAction('menu.delete', 'Menu', productId, 'Deleted dish from catalog');
+        showToast('Dish removed from menu', 'info');
+      } else {
+        showToast(res.message || 'Failed to delete dish on server', 'error');
       }
-    } catch (e) {}
-
-    setProducts((prev) => prev.filter((p) => p.id !== productId));
-    logAuditAction('menu.delete', 'Menu', productId, 'Deleted dish from catalog');
-    showToast('Dish removed from menu', 'info');
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to delete dish on server', 'error');
+    }
   };
 
   const toggleProductAvailability = async (productId: string) => {
-    const prod = products.find(p => p.id === productId);
-    if (prod) {
-      const restId = prod.restaurant_id || prod.restaurantId || '';
-      try {
-        await productApi.toggleAvailability(restId, productId);
-      } catch (e) {}
+    const prod = products.find((p) => String(p.id) === String(productId));
+    if (!prod) return;
+    const restId = prod.restaurant_id || prod.restaurantId || '';
+    try {
+      const res = await productApi.toggleAvailability(restId, productId);
+      if (res.success) {
+        const isAvail = res.data?.is_available ?? !prod.isAvailable;
+        setProducts((prev) =>
+          prev.map((p) => (String(p.id) === String(productId) ? { ...p, isAvailable: isAvail, is_available: isAvail } : p))
+        );
+        showToast(`Dish marked as ${isAvail ? 'In Stock' : 'Sold Out'}`, 'info');
+      } else {
+        showToast(res.message || 'Failed to toggle availability on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to toggle availability on server', 'error');
     }
-
-    setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, isAvailable: !p.isAvailable } : p))
-    );
   };
 
   // Reviews
   const addReview = async (orderId: string, restaurantId: string, rating: number, foodRating: number, comment: string) => {
     try {
-      await reviewApi.submit({
+      const res = await reviewApi.submit({
         order_id: orderId,
         rating,
         food_rating: foodRating,
         comment,
       });
-    } catch (e) {}
-
-    const newRev: Review = {
-      id: `rev-${Date.now()}`,
-      orderId,
-      restaurantId,
-      customerName: currentUser?.name || 'Customer',
-      rating,
-      foodRating,
-      comment,
-      createdAt: new Date().toISOString(),
-      isApproved: true
-    };
-
-    setReviews((prev) => [newRev, ...prev]);
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, hasBeenReviewed: true } : o))
-    );
-
-    setRestaurants((prev) =>
-      prev.map((r) => {
-        if (String(r.id) === String(restaurantId)) {
-          const restaurantReviews = [...reviews.filter((rev) => String(rev.restaurantId) === String(restaurantId)), newRev];
-          const avg = restaurantReviews.reduce((sum, rev) => sum + rev.rating, 0) / restaurantReviews.length;
-          return {
-            ...r,
-            rating: Math.round(avg * 10) / 10,
-            reviewCount: restaurantReviews.length
-          };
-        }
-        return r;
-      })
-    );
-
-    showToast('Thank you for rating your culinary experience!', 'success');
+      if (res.success && res.data) {
+        setReviews((prev) => [res.data, ...prev]);
+        setOrders((prev) =>
+          prev.map((o) => (o.id === orderId ? { ...o, hasBeenReviewed: true } : o))
+        );
+        showToast('Thank you for rating your culinary experience!', 'success');
+      } else {
+        showToast(res.message || 'Failed to submit review', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to submit review', 'error');
+    }
   };
 
   const toggleReviewApproval = (reviewId: string) => {
