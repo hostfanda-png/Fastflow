@@ -31,21 +31,6 @@ import { reviewApi } from '../services/api/reviewApi';
 import { couponApi } from '../services/api/couponApi';
 import { adminApi } from '../services/api/adminApi';
 import { customerApi } from '../services/api/customerApi';
-import { 
-  SEED_CATEGORIES, 
-  SEED_RESTAURANTS, 
-  SEED_PRODUCTS, 
-  SEED_COUPONS, 
-  SEED_REVIEWS, 
-  SEED_RIDERS, 
-  SEED_ORDERS, 
-  SEED_AUDIT_LOGS, 
-  SEED_FINANCIALS, 
-  SEED_DELIVERY_ZONES, 
-  SEED_BANNERS, 
-  SEED_CMS_PAGES, 
-  SEED_SETTINGS 
-} from '../data/seedData';
 
 interface Toast {
   id: string;
@@ -328,19 +313,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('fastflow:unauthorized', handleUnauthorized);
   }, []);
 
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(SEED_RESTAURANTS);
-  const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
-  const [categories, setCategories] = useState<ProductCategory[]>(SEED_CATEGORIES);
-  const [riders, setRiders] = useState<Rider[]>(SEED_RIDERS);
-  const [orders, setOrders] = useState<Order[]>(SEED_ORDERS);
-  const [coupons, setCoupons] = useState<Coupon[]>(SEED_COUPONS);
-  const [reviews, setReviews] = useState<Review[]>(SEED_REVIEWS);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(SEED_AUDIT_LOGS);
-  const [financials, setFinancials] = useState<FinancialTransaction[]>(SEED_FINANCIALS);
-  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(SEED_DELIVERY_ZONES);
-  const [banners, setBanners] = useState<Banner[]>(SEED_BANNERS);
-  const [cmsPages, setCmsPages] = useState<CMSPage[]>(SEED_CMS_PAGES);
-  const [settings, setSettings] = useState<SystemSettings>(SEED_SETTINGS);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [financials, setFinancials] = useState<FinancialTransaction[]>([]);
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [banners, setBanners] = useState<Banner[]>([]);
+  const [cmsPages, setCmsPages] = useState<CMSPage[]>([]);
+  const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
 
   const logAuditAction = (action: string, moduleName: string, recordId?: string, details?: string) => {
     const newLog: AuditLog = {
@@ -413,20 +398,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         riderApi.getAll(),
       ]);
 
-      if (restRes.status === 'fulfilled' && restRes.value.data && Array.isArray(restRes.value.data) && restRes.value.data.length > 0) {
-        setRestaurants(restRes.value.data);
+      if (restRes.status === 'fulfilled' && restRes.value.data) {
+        setRestaurants(Array.isArray(restRes.value.data) ? restRes.value.data : []);
       }
-      if (catRes.status === 'fulfilled' && catRes.value.data && Array.isArray(catRes.value.data) && catRes.value.data.length > 0) {
-        setCategories(catRes.value.data);
+      if (catRes.status === 'fulfilled' && catRes.value.data) {
+        setCategories(Array.isArray(catRes.value.data) ? catRes.value.data : []);
       }
-      if (coupRes.status === 'fulfilled' && coupRes.value.data && Array.isArray(coupRes.value.data) && coupRes.value.data.length > 0) {
-        setCoupons(coupRes.value.data);
+      if (coupRes.status === 'fulfilled' && coupRes.value.data) {
+        setCoupons(Array.isArray(coupRes.value.data) ? coupRes.value.data : []);
       }
-      if (revRes.status === 'fulfilled' && revRes.value.data && Array.isArray(revRes.value.data) && revRes.value.data.length > 0) {
-        setReviews(revRes.value.data);
+      if (revRes.status === 'fulfilled' && revRes.value.data) {
+        setReviews(Array.isArray(revRes.value.data) ? revRes.value.data : []);
       }
-      if (riderRes.status === 'fulfilled' && riderRes.value.data && Array.isArray(riderRes.value.data) && riderRes.value.data.length > 0) {
-        setRiders(riderRes.value.data);
+      if (riderRes.status === 'fulfilled' && riderRes.value.data) {
+        setRiders(Array.isArray(riderRes.value.data) ? riderRes.value.data : []);
       }
 
       // Synchronize authenticated user resources
@@ -505,31 +490,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return {
         id: String(serverCart.restaurant.id),
         name: serverCart.restaurant.name || 'Restaurant',
-        slug: 'kitchen',
-        logo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=120',
-        coverImage: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600',
-        description: 'Fresh and authentic cuisine prepared by our top culinary partners.',
-        address: 'Downtown Food Hub',
+        slug: '',
+        logo: '',
+        coverImage: '',
+        description: '',
+        address: '',
         city: selectedCity,
-        area: 'Central',
-        lat: 31.5204,
-        lng: 74.3587,
-        rating: 4.8,
-        reviewCount: 120,
-        deliveryFee: serverCart.restaurant.delivery_fee || settings.baseDeliveryFee,
-        minimumOrder: serverCart.restaurant.minimum_order || 0,
+        area: '',
+        lat: 0,
+        lng: 0,
+        rating: 0,
+        reviewCount: 0,
+        deliveryFee: Number(serverCart.restaurant.delivery_fee ?? settings.baseDeliveryFee),
+        minimumOrder: Number(serverCart.restaurant.minimum_order ?? 0),
         estimatedDeliveryTime: '25-35 min',
         isOpen: true,
         status: 'approved' as const,
         isFeatured: false,
         commissionRate: 15,
         commissionType: 'percentage' as const,
-        cuisines: ['All'],
-        phone: '+92 300 1234567',
-        email: 'kitchen@fastflow.com',
-        openingHours: {
-          all: { open: '09:00', close: '23:00' }
-        },
+        cuisines: [],
+        phone: '',
+        email: '',
+        openingHours: {},
         serviceRadiusKm: 10,
       };
     }
