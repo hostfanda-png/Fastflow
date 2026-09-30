@@ -26,17 +26,17 @@ export const FoodItemModal: React.FC<FoodItemModalProps> = ({
   const [quantity, setQuantity] = useState<number>(1);
   const [specialInstructions, setSpecialInstructions] = useState<string>('');
 
-  const basePrice = product.discountPrice ?? product.price;
-  const variantPrice = selectedVariant?.priceModifier ?? 0;
-  const addonsPrice = selectedAddons.reduce((sum, a) => sum + a.price, 0);
+  const basePrice = (product.discount_price ?? product.discountPrice) ?? product.price;
+  const variantPrice = (selectedVariant?.price_modifier ?? selectedVariant?.priceModifier) ?? 0;
+  const addonsPrice = selectedAddons.reduce((sum, a) => sum + Number(a.price || 0), 0);
   const unitPrice = basePrice + variantPrice + addonsPrice;
   const totalPrice = unitPrice * quantity;
 
   const toggleAddon = (addon: ProductAddon) => {
     setSelectedAddons((prev) => {
-      const exists = prev.some((a) => a.id === addon.id);
+      const exists = prev.some((a) => String(a.id) === String(addon.id));
       if (exists) {
-        return prev.filter((a) => a.id !== addon.id);
+        return prev.filter((a) => String(a.id) !== String(addon.id));
       } else {
         return [...prev, addon];
       }
@@ -46,18 +46,22 @@ export const FoodItemModal: React.FC<FoodItemModalProps> = ({
   const handleConfirm = () => {
     const cartLine: CartItem = {
       id: `${product.id}-${Date.now()}`,
-      productId: product.id,
+      productId: String(product.id),
       productName: product.name,
       productImage: product.image,
-      restaurantId: product.restaurantId,
+      restaurantId: String(product.restaurant_id || product.restaurantId || ''),
       restaurantName,
       unitPrice,
       quantity,
-      selectedVariant,
+      selectedVariant: selectedVariant ? {
+        id: String(selectedVariant.id),
+        name: selectedVariant.name,
+        priceModifier: Number(selectedVariant.price_modifier ?? selectedVariant.priceModifier ?? 0)
+      } : undefined,
       selectedAddons: selectedAddons.map((a) => ({
-        addonId: a.id,
+        addonId: String(a.id),
         name: a.name,
-        price: a.price
+        price: Number(a.price)
       })),
       specialInstructions: specialInstructions.trim() ? specialInstructions.trim() : undefined,
       itemTotal: totalPrice
@@ -140,7 +144,9 @@ export const FoodItemModal: React.FC<FoodItemModalProps> = ({
                         <span className="text-xs font-medium">{v.name}</span>
                       </div>
                       <span className="text-xs font-mono tabular-nums text-stone-600">
-                        {v.priceModifier > 0 ? `+${formatCurrency(v.priceModifier)}` : 'Standard'}
+                        {Number(v.price_modifier ?? v.priceModifier ?? 0) > 0 
+                          ? `+${formatCurrency(Number(v.price_modifier ?? v.priceModifier))}` 
+                          : 'Standard'}
                       </span>
                     </label>
                   );

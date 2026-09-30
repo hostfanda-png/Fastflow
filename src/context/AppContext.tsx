@@ -934,9 +934,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Product management
   const addProduct = async (p: Omit<Product, 'id'>) => {
+    const restId = p.restaurant_id || p.restaurantId || '';
     let newProduct: Product;
     try {
-      const res = await productApi.create(p.restaurantId, p);
+      const res = await productApi.create(restId, p);
       newProduct = res.data;
     } catch (e) {
       newProduct = { ...p, id: `prod-${Date.now()}` };
@@ -948,8 +949,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateProduct = async (updated: Product) => {
+    const restId = updated.restaurant_id || updated.restaurantId || '';
     try {
-      await productApi.update(updated.restaurantId, updated.id, updated);
+      await productApi.update(restId, updated.id, updated);
     } catch (e) {}
 
     setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
@@ -961,7 +963,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const prod = products.find(p => p.id === productId);
       if (prod) {
-        await productApi.delete(prod.restaurantId, productId);
+        const restId = prod.restaurant_id || prod.restaurantId || '';
+        await productApi.delete(restId, productId);
       }
     } catch (e) {}
 
@@ -973,8 +976,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleProductAvailability = async (productId: string) => {
     const prod = products.find(p => p.id === productId);
     if (prod) {
+      const restId = prod.restaurant_id || prod.restaurantId || '';
       try {
-        await productApi.toggleAvailability(prod.restaurantId, productId);
+        await productApi.toggleAvailability(restId, productId);
       } catch (e) {}
     }
 

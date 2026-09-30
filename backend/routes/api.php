@@ -31,7 +31,9 @@ Route::prefix('v1')->group(function () {
     // Public Browsing Routes
     Route::get('restaurants', [RestaurantController::class, 'index']);
     Route::get('restaurants/{restaurant}', [RestaurantController::class, 'show']);
+    Route::get('restaurants/{restaurant}/menu', [MenuController::class, 'getPublicMenu']);
     Route::get('categories', [MenuController::class, 'getCategories']);
+    Route::get('products', [MenuController::class, 'getPublicProducts']);
     Route::get('cuisines', [CuisineController::class, 'index']);
     Route::get('coupons', [CouponController::class, 'index']);
     Route::post('coupons/validate', [CouponController::class, 'validateCoupon']);
@@ -105,11 +107,36 @@ Route::prefix('v1')->group(function () {
         Route::get('restaurants/{restaurant}/orders', [OwnerRestaurantController::class, 'getOrders']);
         Route::put('restaurants/{restaurant}/orders/{order}/status', [OwnerRestaurantController::class, 'updateOrderStatus']);
         
-        // Menu CRUD
+        // Menu: Categories CRUD
+        Route::get('restaurants/{restaurant}/categories', [MenuController::class, 'getOwnerCategories']);
+        Route::post('restaurants/{restaurant}/categories', [MenuController::class, 'storeCategory']);
+        Route::get('restaurants/{restaurant}/categories/{category}', [MenuController::class, 'showCategory']);
+        Route::put('restaurants/{restaurant}/categories/{category}', [MenuController::class, 'updateCategory']);
+        Route::delete('restaurants/{restaurant}/categories/{category}', [MenuController::class, 'deleteCategory']);
+        Route::post('restaurants/{restaurant}/categories/reorder', [MenuController::class, 'reorderCategories']);
+
+        // Menu: Products CRUD
+        Route::get('restaurants/{restaurant}/products', [MenuController::class, 'getOwnerProducts']);
         Route::post('restaurants/{restaurant}/products', [MenuController::class, 'storeProduct']);
+        Route::get('restaurants/{restaurant}/products/{product}', [MenuController::class, 'showProduct']);
         Route::put('restaurants/{restaurant}/products/{product}', [MenuController::class, 'updateProduct']);
         Route::delete('restaurants/{restaurant}/products/{product}', [MenuController::class, 'deleteProduct']);
         Route::patch('restaurants/{restaurant}/products/{product}/toggle', [MenuController::class, 'toggleAvailability']);
+        Route::post('restaurants/{restaurant}/products/{product}/image', [MenuController::class, 'uploadProductImage']);
+        Route::post('restaurants/{restaurant}/products/reorder', [MenuController::class, 'reorderProducts']);
+
+        // Menu: Product Variants
+        Route::get('restaurants/{restaurant}/products/{product}/variants', [MenuController::class, 'getVariants']);
+        Route::post('restaurants/{restaurant}/products/{product}/variants', [MenuController::class, 'storeVariant']);
+        Route::put('restaurants/{restaurant}/products/{product}/variants/{variant}', [MenuController::class, 'updateVariant']);
+        Route::delete('restaurants/{restaurant}/products/{product}/variants/{variant}', [MenuController::class, 'deleteVariant']);
+
+        // Menu: Add-ons
+        Route::get('restaurants/{restaurant}/addons', [MenuController::class, 'getAddons']);
+        Route::post('restaurants/{restaurant}/addons', [MenuController::class, 'storeAddon']);
+        Route::put('restaurants/{restaurant}/addons/{addon}', [MenuController::class, 'updateAddon']);
+        Route::delete('restaurants/{restaurant}/addons/{addon}', [MenuController::class, 'deleteAddon']);
+        Route::post('restaurants/{restaurant}/products/{product}/addons/sync', [MenuController::class, 'syncProductAddons']);
     });
 
     // Delivery Courier Routes

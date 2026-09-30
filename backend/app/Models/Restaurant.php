@@ -85,6 +85,16 @@ class Restaurant extends Model
         return $this->hasMany(Product::class);
     }
 
+    public function categories()
+    {
+        return $this->hasMany(Category::class)->orderBy('sort_order');
+    }
+
+    public function addons()
+    {
+        return $this->hasMany(Addon::class)->orderBy('sort_order');
+    }
+
     public function cuisines()
     {
         return $this->belongsToMany(Cuisine::class, 'restaurant_cuisines');

@@ -59,29 +59,53 @@ export type PaymentMethod = 'cod' | 'stripe' | 'wallet';
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 
 export interface ProductVariant {
-  id: string;
+  id: string | number;
+  product_id?: string | number;
+  productId?: string;
   name: string;
-  priceModifier: number; // e.g. +0 for Single, +150 for Double, +300 for Meal
+  priceModifier?: number; // camelCase
+  price_modifier?: number; // snake_case from backend
+  is_active?: boolean;
+  isActive?: boolean;
+  sort_order?: number;
 }
 
 export interface ProductAddon {
-  id: string;
+  id: string | number;
+  restaurant_id?: string | number;
+  restaurantId?: string;
   name: string;
   price: number;
+  is_available?: boolean;
+  isAvailable?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+  products_count?: number;
 }
 
 export interface Product {
   id: string;
-  restaurantId: string;
-  categoryId: string;
+  restaurantId?: string;
+  restaurant_id?: string | number;
+  categoryId?: string;
+  category_id?: string | number;
   name: string;
+  slug?: string;
   description: string;
   image: string;
   price: number;
   discountPrice?: number;
+  discount_price?: number;
+  compareAtPrice?: number;
+  compare_at_price?: number;
   isAvailable: boolean;
+  is_available?: boolean;
+  sort_order?: number;
   preparationTime: number; // in minutes
+  preparation_time?: number;
   taxRate?: number; // percentage
+  tax_rate?: number;
+  category?: ProductCategory;
   variants?: ProductVariant[];
   addons?: ProductAddon[];
 }
@@ -89,9 +113,16 @@ export interface Product {
 export interface ProductCategory {
   id: string;
   restaurantId?: string;
+  restaurant_id?: string | number | null;
   name: string;
+  slug?: string;
+  description?: string;
   icon?: string;
   image?: string;
+  is_active?: boolean;
+  sort_order?: number;
+  products_count?: number;
+  products?: Product[];
 }
 
 export interface RestaurantOpeningHours {

@@ -11,6 +11,7 @@ import {
   restaurantApi, 
   OwnerRestaurantDashboardData 
 } from '../../services/api/restaurantApi';
+import { MenuManagement } from './MenuManagement';
 import { 
   Store, 
   ShoppingBag, 
@@ -978,63 +979,7 @@ export const RestaurantDashboard: React.FC = () => {
 
       {/* TAB 2: Menu Catalog */}
       {activeTab === 'menu' && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-bold text-stone-900">Menu Catalog</h2>
-              <p className="text-xs text-stone-500">Manage dish offerings, stock status, and prep times</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {productsList.map((prod) => (
-              <div
-                key={prod.id}
-                className="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-xs p-4 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="relative aspect-[16/9] rounded-xl overflow-hidden mb-3 bg-stone-100">
-                    <img
-                      src={prod.image}
-                      alt={prod.name}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    {!prod.isAvailable && (
-                      <div className="absolute inset-0 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center">
-                        <span className="text-[11px] font-bold text-white uppercase tracking-wider bg-red-600 px-2.5 py-0.5 rounded">
-                          Sold Out
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-sm font-bold text-stone-900">{prod.name}</h3>
-                    <div className="text-xs font-mono font-bold text-stone-900 tabular-nums">
-                      {formatCurrency(prod.price)}
-                    </div>
-                  </div>
-
-                  <p className="mt-1 text-xs text-stone-500 line-clamp-2">
-                    {prod.description}
-                  </p>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
-                  <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                    prod.isAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                  }`}>
-                    {prod.isAvailable ? 'In Stock' : 'Out of Stock'}
-                  </span>
-                  <span className="text-stone-400 font-mono text-[11px]">
-                    ⏱ {prod.preparationTime || 15}m prep
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <MenuManagement restaurantId={selectedRestaurant.id} />
       )}
 
       {/* TAB 3: Settings (Phase 2A Foundation) */}

@@ -4,7 +4,9 @@ import {
   RestaurantDeliveryZone, 
   RestaurantHourSlot, 
   RestaurantDashboardMetrics,
-  Cuisine 
+  Cuisine,
+  Product,
+  ProductCategory
 } from '../../types';
 
 export interface RestaurantFilterParams {
@@ -50,6 +52,10 @@ export const restaurantApi = {
 
   getById: async (idOrSlug: string | number): Promise<ApiResponse<Restaurant>> => {
     return apiClient.get<Restaurant>(`/restaurants/${idOrSlug}`);
+  },
+
+  getMenu: async (idOrSlug: string | number): Promise<ApiResponse<{ restaurant: any; categories: ProductCategory[]; products: Product[] }>> => {
+    return apiClient.get<{ restaurant: any; categories: ProductCategory[]; products: Product[] }>(`/restaurants/${idOrSlug}/menu`);
   },
 
   // Central Cuisines
