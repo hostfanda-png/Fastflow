@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('coupons', function (Blueprint $table) {
             $table->id();
-            $table->string('code')->unique()->index();
+            $table->string('code')->unique();
             $table->enum('discount_type', ['percentage', 'fixed'])->default('percentage');
             $table->decimal('discount_value', 10, 2);
             $table->decimal('min_order_amount', 10, 2)->default(0.00);
@@ -35,6 +35,7 @@ return new class extends Migration
             $table->foreignId('order_id')->constrained('orders')->cascadeOnDelete();
             $table->decimal('discount_applied', 10, 2);
             $table->timestamp('used_at')->useCurrent();
+            $table->index(['coupon_id', 'user_id']);
         });
 
         Schema::create('promotions', function (Blueprint $table) {

@@ -32,10 +32,11 @@ class OrderService
             // Double checkout / Idempotency protection
             $idempotencyKey = $data['idempotency_key'] ?? null;
             if (!empty($idempotencyKey)) {
-                $existing = Order::where('idempotency_key', $idempotencyKey)
-                    ->where('customer_id', $customer->id)
-                    ->first();
+                $existing = Order::where('idempotency_key', $idempotencyKey)->first();
                 if ($existing) {
+                    if ($existing->customer_id !== $customer->id) {
+                        throw new Exception("Idempotency key has already been used by another transaction.");
+                    }
                     return $existing->load(['items.addons', 'restaurant']);
                 }
             }

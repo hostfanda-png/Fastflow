@@ -232,4 +232,53 @@ class CartCheckoutTest extends TestCase
         $intruderRes = $this->actingAs($customerB, 'sanctum')->getJson("/api/v1/orders/{$order['id']}");
         $intruderRes->assertStatus(403);
     }
+
+    public function test_customer_cannot_hijack_another_customer_idempotency_key(): void
+    {
+        $customerRole = Role::firstOrCreate(['name' => 'customer'], ['display_name' => 'Customer']);
+        $ownerRole = Role::firstOrCreate(['name' => 'restaurant_owner'], ['display_name' => 'Owner']);
+
+        $customerA = User::factory()->create(['role_id' => $customerRole->id]);
+        $customerB = User::factory()->create(['role_id' => $customerRole->id]);
+        $owner = User::factory()->create(['role_id' => $ownerRole->id]);
+
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Rest Y',
+            'slug' => 'rest-y',
+            'address' => 'Y',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+            'is_open' => true,
+        ]);
+
+        $category = Category::create(['name' => 'Meals', 'slug' => 'meals-y']);
+        $product = Product::create(['restaurant_id' => $restaurant->id, 'category_id' => $category->id, 'name' => 'Dish Y', 'slug' => 'dish-y', 'price' => 500, 'is_available' => true]);
+
+        $sharedKey = 'idemp_shared_key_test_999';
+
+        // Customer A places order with key
+        $resA = $this->actingAs($customerA, 'sanctum')->postJson('/api/v1/orders/checkout', [
+            'idempotency_key' => $sharedKey,
+            'restaurant_id' => $restaurant->id,
+            'delivery_address' => ['street' => 'Street A', 'area' => 'Gulberg', 'city' => 'Lahore'],
+            'payment_method' => 'cod',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ]);
+        $resA->assertStatus(201);
+
+        // Customer B attempts to reuse Customer A's key
+        $resB = $this->actingAs($customerB, 'sanctum')->postJson('/api/v1/orders/checkout', [
+            'idempotency_key' => $sharedKey,
+            'restaurant_id' => $restaurant->id,
+            'delivery_address' => ['street' => 'Street B', 'area' => 'Gulberg', 'city' => 'Lahore'],
+            'payment_method' => 'cod',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ]);
+        // Rejected with 422, does not return Customer A's order
+        $resB->assertStatus(422);
+    }
 }
