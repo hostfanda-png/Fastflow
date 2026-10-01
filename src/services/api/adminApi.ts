@@ -1,5 +1,16 @@
 import { apiClient, ApiResponse } from './client';
 
+export interface CreateRiderPayload {
+  name: string;
+  email: string;
+  phone: string;
+  password?: string;
+  vehicle_type: 'Motorcycle' | 'Bicycle' | 'Scooter' | 'Car';
+  vehicle_number: string;
+  commission_per_delivery?: number;
+  status?: string;
+}
+
 export const adminApi = {
   getDashboardMetrics: async (): Promise<ApiResponse<{ metrics: Record<string, number> }>> => {
     return apiClient.get('/admin/dashboard');
@@ -24,8 +35,24 @@ export const adminApi = {
     });
   },
 
-  getRiders: async (): Promise<ApiResponse<any[]>> => {
-    return apiClient.get('/admin/riders');
+  getRiders: async (params?: { status?: string; search?: string }): Promise<ApiResponse<any[]>> => {
+    return apiClient.get('/admin/riders', params);
+  },
+
+  createRider: async (payload: CreateRiderPayload): Promise<ApiResponse<any>> => {
+    return apiClient.post('/admin/riders', payload);
+  },
+
+  getRider: async (riderId: string | number): Promise<ApiResponse<any>> => {
+    return apiClient.get(`/admin/riders/${riderId}`);
+  },
+
+  updateRider: async (riderId: string | number, payload: Partial<CreateRiderPayload> & { is_active?: boolean; status?: string }): Promise<ApiResponse<any>> => {
+    return apiClient.put(`/admin/riders/${riderId}`, payload);
+  },
+
+  deleteRider: async (riderId: string | number): Promise<ApiResponse<any>> => {
+    return apiClient.delete(`/admin/riders/${riderId}`);
   },
 
   assignRider: async (orderId: string | number, riderId: string | number): Promise<ApiResponse<any>> => {

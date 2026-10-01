@@ -137,12 +137,19 @@ Route::prefix('v1')->group(function () {
         Route::put('restaurants/{restaurant}/addons/{addon}', [MenuController::class, 'updateAddon']);
         Route::delete('restaurants/{restaurant}/addons/{addon}', [MenuController::class, 'deleteAddon']);
         Route::post('restaurants/{restaurant}/products/{product}/addons/sync', [MenuController::class, 'syncProductAddons']);
+
+        // Delivery Rider Assignment
+        Route::get('restaurants/{restaurant}/eligible-riders', [OwnerRestaurantController::class, 'getEligibleRiders']);
+        Route::post('restaurants/{restaurant}/orders/{order}/assign-rider', [OwnerRestaurantController::class, 'assignRider']);
     });
 
     // Delivery Courier Routes
     Route::prefix('rider')->middleware(['auth:sanctum', 'role:delivery_rider'])->group(function () {
+        Route::get('dashboard', [RiderController::class, 'dashboard']);
         Route::get('orders', [RiderController::class, 'getOrders']);
+        Route::get('orders/current', [RiderController::class, 'getCurrentOrder']);
         Route::put('status', [RiderController::class, 'updateStatus']);
+        Route::post('orders/{order}/accept', [RiderController::class, 'acceptOrder']);
         Route::post('orders/{order}/pickup', [RiderController::class, 'pickupOrder']);
         Route::post('orders/{order}/start-delivery', [RiderController::class, 'startDelivery']);
         Route::post('orders/{order}/deliver', [RiderController::class, 'deliverOrder']);
@@ -155,6 +162,10 @@ Route::prefix('v1')->group(function () {
         Route::put('restaurants/{restaurant}/status', [AdminController::class, 'setRestaurantStatus']);
         Route::put('restaurants/{restaurant}/commission', [AdminController::class, 'updateCommission']);
         Route::get('riders', [AdminController::class, 'getRiders']);
+        Route::post('riders', [AdminController::class, 'storeRider']);
+        Route::get('riders/{rider}', [AdminController::class, 'showRider']);
+        Route::put('riders/{rider}', [AdminController::class, 'updateRider']);
+        Route::delete('riders/{rider}', [AdminController::class, 'deleteRider']);
         Route::post('orders/{order}/assign-rider', [AdminController::class, 'assignRider']);
         Route::post('orders/{order}/auto-dispatch', [AdminController::class, 'autoDispatch']);
         Route::get('financials', [AdminController::class, 'getFinancials']);

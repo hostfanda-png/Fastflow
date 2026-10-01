@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Restaurant, Rider, Coupon, OrderStatus } from '../../types';
+import { adminApi } from '../../services/api/adminApi';
 import { 
   ShieldCheck, 
   Store, 
@@ -48,12 +49,26 @@ export const AdminDashboard: React.FC = () => {
     cmsPages, 
     updateCMSPage, 
     formatCurrency,
+    showToast,
+    refreshData,
     openAuthModal
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
     'analytics' | 'restaurants' | 'riders' | 'orders' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings'
   >('analytics');
+
+  // Rider Management Modal States
+  const [showRiderModal, setShowRiderModal] = useState(false);
+  const [riderFormLoading, setRiderFormLoading] = useState(false);
+  const [newRiderName, setNewRiderName] = useState('');
+  const [newRiderEmail, setNewRiderEmail] = useState('');
+  const [newRiderPhone, setNewRiderPhone] = useState('');
+  const [newRiderPassword, setNewRiderPassword] = useState('');
+  const [newRiderVehicleType, setNewRiderVehicleType] = useState<'Motorcycle' | 'Bicycle' | 'Scooter' | 'Car'>('Motorcycle');
+  const [newRiderVehicleNumber, setNewRiderVehicleNumber] = useState('');
+  const [newRiderCommission, setNewRiderCommission] = useState('100');
+  const [selectedRiderForOrder, setSelectedRiderForOrder] = useState<Record<string, string>>({});
 
   if (!currentUser || currentUser.role !== 'super_admin') {
     return (
@@ -97,6 +112,81 @@ export const AdminDashboard: React.FC = () => {
   // CMS edit state
   const [selectedCMSPage, setSelectedCMSPage] = useState(cmsPages[0]);
   const [cmsContentEdit, setCmsContentEdit] = useState(cmsPages[0].content);
+
+  const handleCreateRiderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRiderName || !newRiderEmail || !newRiderPhone || !newRiderPassword || !newRiderVehicleNumber) {
+      showToast('Please fill out all required courier fields.', 'error');
+      return;
+    }
+
+    setRiderFormLoading(true);
+    try {
+      const res = await adminApi.createRider({
+        name: newRiderName,
+        email: newRiderEmail,
+        phone: newRiderPhone,
+        password: newRiderPassword,
+        vehicle_type: newRiderVehicleType,
+        vehicle_number: newRiderVehicleNumber,
+        commission_per_delivery: parseFloat(newRiderCommission) || 100,
+      });
+
+      if (res.success) {
+        showToast(`Courier ${newRiderName} registered successfully!`, 'success');
+        setShowRiderModal(false);
+        setNewRiderName('');
+        setNewRiderEmail('');
+        setNewRiderPhone('');
+        setNewRiderPassword('');
+        setNewRiderVehicleNumber('');
+        await refreshData();
+      } else {
+        showToast(res.message || 'Failed to register courier', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to register courier', 'error');
+    } finally {
+      setRiderFormLoading(false);
+    }
+  };
+
+  const handleUpdateRiderStatus = async (riderId: string, status: string) => {
+    try {
+      const res = await adminApi.updateRider(riderId, { status });
+      if (res.success) {
+        showToast(`Courier status updated to ${status}`, 'info');
+        await refreshData();
+      } else {
+        showToast(res.message || 'Failed to update courier status', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to update courier status', 'error');
+    }
+  };
+
+  const handleDeactivateRider = async (riderId: string) => {
+    try {
+      const res = await adminApi.deleteRider(riderId);
+      if (res.success) {
+        showToast('Courier safely deactivated/archived', 'info');
+        await refreshData();
+      } else {
+        showToast(res.message || 'Failed to deactivate courier', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to deactivate courier', 'error');
+    }
+  };
+
+  const handleManualAssign = async (orderId: string) => {
+    const targetRiderId = selectedRiderForOrder[orderId];
+    if (!targetRiderId) {
+      showToast('Please select a courier from the dropdown first.', 'error');
+      return;
+    }
+    await assignRiderToOrder(orderId, targetRiderId);
+  };
 
   const handleSaveCommission = () => {
     if (editingCommissionRest) {
@@ -450,69 +540,266 @@ export const AdminDashboard: React.FC = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-base font-bold text-stone-900">Courier Fleet & Automated Dispatch</h2>
-              <p className="text-xs text-stone-500">Monitor active rider workload and trigger dispatch algorithms</p>
+              <p className="text-xs text-stone-500">Monitor live courier fleet, register new drivers, update availability, and assign delivery jobs</p>
             </div>
+            <button
+              onClick={() => setShowRiderModal(true)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Register Courier</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            {riders.map((r) => (
-              <div key={r.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-200">
-                <div className="flex items-center gap-3 mb-2">
-                  <img
-                    src={r.photo}
-                    alt={r.name}
-                    className="w-10 h-10 rounded-full object-cover border border-stone-300"
-                    referrerPolicy="no-referrer"
-                  />
+            {riders.map((r) => {
+              const isAvailable = r.status === 'available';
+              const isSuspended = r.status === 'suspended';
+
+              return (
+                <div key={r.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-200 flex flex-col justify-between">
                   <div>
-                    <h4 className="text-xs font-bold text-stone-900">{r.name}</h4>
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                      r.status === 'available' ? 'text-emerald-700' : 'text-stone-400'
-                    }`}>
-                      {r.status}
-                    </span>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-xs">
+                          <Bike className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-stone-900">{r.name}</h4>
+                          <span className="text-[10px] text-stone-500">{r.phone}</span>
+                        </div>
+                      </div>
+
+                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                        isAvailable 
+                          ? 'bg-emerald-50 text-emerald-700' 
+                          : isSuspended 
+                          ? 'bg-red-50 text-red-700' 
+                          : 'bg-stone-200 text-stone-600'
+                      }`}>
+                        {r.status}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 text-xs text-stone-600 my-2 pt-2 border-t border-stone-200/60">
+                      <div>Vehicle: <strong>{r.vehicle}</strong> ({r.vehicleNumber})</div>
+                      <div>Active In-Route: <strong className="font-mono text-amber-700">{r.assignedOrderCount}</strong></div>
+                      <div>Total Deliveries: <strong className="font-mono">{r.totalDeliveries}</strong></div>
+                      <div>Rating: <strong className="text-amber-600">{r.rating} ★</strong></div>
+                      <div>Fee / Drop: <strong className="font-mono">{formatCurrency(r.commissionPerDelivery || 100)}</strong></div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1 pt-3 border-t border-stone-200 text-[11px]">
+                    {isSuspended ? (
+                      <button
+                        onClick={() => handleUpdateRiderStatus(r.id, 'available')}
+                        className="text-emerald-700 font-bold hover:underline cursor-pointer"
+                      >
+                        Activate Driver
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleUpdateRiderStatus(r.id, 'suspended')}
+                        className="text-amber-700 font-semibold hover:underline cursor-pointer"
+                      >
+                        Suspend Driver
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => handleDeactivateRider(r.id)}
+                      className="text-red-600 font-semibold hover:underline cursor-pointer"
+                    >
+                      Archive Driver
+                    </button>
                   </div>
                 </div>
-
-                <div className="space-y-1 text-xs text-stone-600">
-                  <div>Vehicle: <strong>{r.vehicle}</strong> ({r.vehicleNumber})</div>
-                  <div>Active Trips: <strong className="font-mono">{r.assignedOrderCount}</strong></div>
-                  <div>Total Deliveries: <strong className="font-mono">{r.totalDeliveries}</strong></div>
-                  <div>Rating: <strong className="text-amber-600">{r.rating} ★</strong></div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          {/* Unassigned Orders Queue with Auto-Dispatch Button */}
+          {/* Unassigned Orders Queue with Manual & Auto-Dispatch */}
           <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider mb-3">
             Orders Requiring Courier Assignment
           </h3>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             {orders.filter(o => !o.riderId && !['delivered', 'cancelled'].includes(o.orderStatus)).length === 0 ? (
               <p className="text-xs text-stone-500 py-3">All active orders have been assigned to couriers.</p>
             ) : (
-              orders.filter(o => !o.riderId && !['delivered', 'cancelled'].includes(o.orderStatus)).map((ord) => (
-                <div key={ord.id} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl flex items-center justify-between">
-                  <div>
-                    <span className="font-mono font-bold text-xs">{ord.orderNumber}</span>
-                    <span className="text-xs text-stone-600 ml-2">from {ord.restaurantName} to {ord.deliveryAddress.area}</span>
-                  </div>
+              orders.filter(o => !o.riderId && !['delivered', 'cancelled'].includes(o.orderStatus)).map((ord) => {
+                const availableRiders = riders.filter(r => r.status === 'available' || r.status === 'busy');
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => autoDispatchRider(ord.id)}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition-colors flex items-center gap-1"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Smart Auto-Dispatch</span>
-                    </button>
+                return (
+                  <div key={ord.id} className="p-4 bg-amber-50/60 border border-amber-200 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-xs text-stone-900">{ord.orderNumber}</span>
+                        <span className="text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                          {ord.orderStatus.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-600 mt-0.5">
+                        {ord.restaurantName} → {ord.deliveryAddress.area}, {ord.deliveryAddress.city}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={selectedRiderForOrder[ord.id] || ''}
+                        onChange={(e) => setSelectedRiderForOrder(prev => ({ ...prev, [ord.id]: e.target.value }))}
+                        className="text-xs p-2 bg-white border border-stone-200 rounded-xl"
+                      >
+                        <option value="">Select Available Courier...</option>
+                        {availableRiders.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name} ({r.vehicle} - {r.status})
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        onClick={() => handleManualAssign(ord.id)}
+                        className="px-3 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                      >
+                        Assign Selected
+                      </button>
+
+                      <button
+                        onClick={() => autoDispatchRider(ord.id)}
+                        className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Auto-Dispatch</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
+
+          {/* Create Courier Modal */}
+          {showRiderModal && (
+            <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-stone-200">
+                <h3 className="text-base font-bold text-stone-900 mb-1">Register New Delivery Courier</h3>
+                <p className="text-xs text-stone-500 mb-4">
+                  Create an authenticated courier profile with vehicle registration and per-drop commission.
+                </p>
+
+                <form onSubmit={handleCreateRiderSubmit} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={newRiderName}
+                      onChange={(e) => setNewRiderName(e.target.value)}
+                      placeholder="e.g. Tariq Khan"
+                      className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">Email</label>
+                      <input
+                        type="email"
+                        required
+                        value={newRiderEmail}
+                        onChange={(e) => setNewRiderEmail(e.target.value)}
+                        placeholder="rider@fastflow.app"
+                        className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">Phone</label>
+                      <input
+                        type="tel"
+                        required
+                        value={newRiderPhone}
+                        onChange={(e) => setNewRiderPhone(e.target.value)}
+                        placeholder="0300-1234567"
+                        className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">Password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={newRiderPassword}
+                      onChange={(e) => setNewRiderPassword(e.target.value)}
+                      placeholder="Minimum 8 characters"
+                      className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">Vehicle Type</label>
+                      <select
+                        value={newRiderVehicleType}
+                        onChange={(e) => setNewRiderVehicleType(e.target.value as any)}
+                        className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                      >
+                        <option value="Motorcycle">Motorcycle</option>
+                        <option value="Bicycle">Bicycle</option>
+                        <option value="Scooter">Scooter</option>
+                        <option value="Car">Car</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">Vehicle Plate / Number</label>
+                      <input
+                        type="text"
+                        required
+                        value={newRiderVehicleNumber}
+                        onChange={(e) => setNewRiderVehicleNumber(e.target.value)}
+                        placeholder="LHR-2026-99"
+                        className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl uppercase font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">Commission Per Delivery ({formatCurrency(0).split(' ')[0]})</label>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      value={newRiderCommission}
+                      onChange={(e) => setNewRiderCommission(e.target.value)}
+                      placeholder="100"
+                      className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl font-mono"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRiderModal(false)}
+                      className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={riderFormLoading}
+                      className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                    >
+                      {riderFormLoading ? 'Registering...' : 'Register Courier'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -9,6 +9,8 @@ use App\Models\Product;
 use App\Models\RestaurantHour;
 use App\Models\RestaurantDeliveryZone;
 use App\Models\Role;
+use App\Models\Rider;
+use App\Models\OrderStatusHistory;
 use App\Http\Requests\RestaurantUpdateRequest;
 use App\Http\Requests\RestaurantApplicationRequest;
 use App\Http\Requests\RestaurantHoursUpdateRequest;
@@ -679,6 +681,101 @@ class OwnerRestaurantController extends Controller
         AuditService::log('order.status_update', 'Kitchen', (string)$order->id, "Kitchen marked order as {$status}", $user);
 
         return $this->sendResponse($order, "Order status transitioned to {$status}");
+    }
+
+    /**
+     * Get eligible online couriers for restaurant assignment.
+     */
+    public function getEligibleRiders(Request $request, $restaurantId): JsonResponse
+    {
+        $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $this->authorizeRestaurantAccess($user, $restaurantId);
+
+        $riders = Rider::with('user')
+            ->where('status', 'available')
+            ->where('is_active', true)
+            ->orderBy('assigned_order_count', 'asc')
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'id' => $r->id,
+                    'name' => $r->user?->name ?? 'Courier',
+                    'phone' => $r->user?->phone,
+                    'vehicle_type' => $r->vehicle_type,
+                    'vehicle_number' => $r->vehicle_number,
+                    'rating' => (float)$r->rating,
+                    'assigned_order_count' => (int)$r->assigned_order_count,
+                ];
+            });
+
+        return $this->sendResponse($riders, 'Eligible available couriers retrieved');
+    }
+
+    /**
+     * Restaurant manual courier assignment with strict multi-tenant IDOR protection.
+     */
+    public function assignRider(Request $request, $restaurantId, $orderId): JsonResponse
+    {
+        $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $orderId = $orderId instanceof Order ? $orderId->id : (int)$orderId;
+        $this->authorizeRestaurantAccess($user, $restaurantId);
+
+        // Strict multi-tenant verification: Order MUST belong to this restaurant
+        $order = Order::where('restaurant_id', $restaurantId)->findOrFail($orderId);
+
+        $unassignableStates = ['cancelled', 'delivered', 'refunded'];
+        if (in_array($order->order_status, $unassignableStates)) {
+            return $this->sendError("Order cannot be assigned in '{$order->order_status}' status.", [], 422);
+        }
+
+        $riderId = $request->validate([
+            'rider_id' => ['required', 'exists:riders,id']
+        ])['rider_id'];
+
+        $rider = Rider::with('user')->findOrFail($riderId);
+
+        // Eligibility validation
+        if (!$rider->is_active || in_array($rider->status, ['suspended', 'inactive', 'offline'])) {
+            return $this->sendError("Courier '{$rider->user->name}' is currently {$rider->status} or inactive and cannot accept orders.", [], 422);
+        }
+
+        $isReassignment = !empty($order->rider_id) && $order->rider_id != $rider->id;
+        $prevRiderId = $order->rider_id;
+
+        DB::transaction(function () use ($order, $rider, $isReassignment, $prevRiderId, $user) {
+            if ($isReassignment) {
+                $prevRider = Rider::find($prevRiderId);
+                if ($prevRider) {
+                    $prevRider->assigned_order_count = max(0, $prevRider->assigned_order_count - 1);
+                    $prevRider->save();
+                }
+            }
+
+            $order->rider_id = $rider->id;
+            if (in_array($order->order_status, ['pending', 'confirmed', 'preparing', 'ready_for_pickup'])) {
+                $order->order_status = 'assigned_to_rider';
+            }
+            $order->save();
+
+            $rider->increment('assigned_order_count');
+
+            OrderStatusHistory::create([
+                'order_id' => $order->id,
+                'status' => $order->order_status,
+                'note' => $isReassignment 
+                    ? "Order reassigned to courier {$rider->user->name}" 
+                    : "Kitchen assigned courier {$rider->user->name}",
+                'actor' => $user->name,
+                'created_at' => now(),
+            ]);
+
+            $auditAction = $isReassignment ? 'delivery.reassign' : 'delivery.assign';
+            AuditService::log($auditAction, 'Orders', (string)$order->id, "Kitchen assigned courier {$rider->user->name} to order {$order->order_number}", $user);
+        });
+
+        return $this->sendResponse($order->load('rider.user'), "Order successfully assigned to {$rider->user->name}");
     }
 
     /**

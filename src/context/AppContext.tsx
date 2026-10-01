@@ -395,7 +395,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         categoryApi.getAll(),
         couponApi.getAll(),
         reviewApi.getAll(),
-        riderApi.getAll(),
+        adminApi.getRiders(),
       ]);
 
       if (restRes.status === 'fulfilled' && restRes.value.data) {

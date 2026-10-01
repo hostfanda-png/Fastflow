@@ -302,19 +302,21 @@ export interface Order {
   hasBeenReviewed?: boolean;
 }
 
-export type RiderStatus = 'available' | 'busy' | 'offline' | 'suspended';
+export type RiderStatus = 'available' | 'busy' | 'offline' | 'on_delivery' | 'suspended' | 'inactive';
 
 export interface Rider {
   id: string;
   userId: string;
   name: string;
   phone: string;
-  photo: string;
-  vehicle: 'Motorcycle' | 'Bicycle' | 'Scooter';
+  photo?: string;
+  vehicle: 'Motorcycle' | 'Bicycle' | 'Scooter' | 'Car';
   vehicleNumber: string;
   status: RiderStatus;
-  currentLat: number;
-  currentLng: number;
+  isActive?: boolean;
+  is_active?: boolean;
+  currentLat?: number;
+  currentLng?: number;
   assignedOrderCount: number;
   totalDeliveries: number;
   rating: number;
