@@ -209,7 +209,7 @@ export const mapServerOrder = (data: any): Order => {
     ? rawItems.map((it: any) => ({
         id: String(it.id || ''),
         productId: String(it.product_id || it.productId || ''),
-        productName: it.product_name || it.productName || 'Item',
+        productName: it.product_name || it.productName || it.name || '',
         quantity: Number(it.quantity || 1),
         unitPrice: Number(it.unit_price ?? it.unitPrice ?? 0),
         totalPrice: Number(it.subtotal ?? it.totalPrice ?? (Number(it.unit_price ?? it.unitPrice ?? 0) * Number(it.quantity || 1))),
@@ -230,13 +230,13 @@ export const mapServerOrder = (data: any): Order => {
 
   return {
     id: String(data.id),
-    orderNumber: data.order_number || data.orderNumber || `ORD-${data.id}`,
+    orderNumber: data.order_number || data.orderNumber || '',
     customerId: String(data.customer_id || data.customerId || ''),
-    customerName: data.customer_name || data.customerName || 'Customer',
+    customerName: data.customer_name || data.customerName || data.user?.name || '',
     customerPhone: data.customer_phone || data.customerPhone || '',
     deliveryAddress: {
-      id: address.id || 'addr-1',
-      label: address.label || 'Home',
+      id: address.id || '',
+      label: address.label || '',
       street: address.street || '',
       area: address.area || '',
       city: address.city || '',
@@ -246,7 +246,7 @@ export const mapServerOrder = (data: any): Order => {
     },
     deliveryInstructions: data.delivery_instructions || data.deliveryInstructions,
     restaurantId: String(data.restaurant_id || data.restaurantId || data.restaurant?.id || ''),
-    restaurantName: data.restaurant?.name || data.restaurant_name || data.restaurantName || 'Restaurant',
+    restaurantName: data.restaurant?.name || data.restaurant_name || data.restaurantName || '',
     items: mappedItems,
     subtotal: Number(data.subtotal || 0),
     discount: Number(data.discount || 0),
@@ -264,7 +264,7 @@ export const mapServerOrder = (data: any): Order => {
     riderPhone: data.rider_id ? riderPhone : undefined,
     statusHistory: mappedHistory,
     createdAt: data.created_at || data.createdAt || '',
-    estimatedDeliveryTime: data.estimated_delivery_time || data.estimatedDeliveryTime || '30-40 min',
+    estimatedDeliveryTime: data.estimated_delivery_time || data.estimatedDeliveryTime || '',
     cancellationReason: data.cancellation_reason || data.cancellationReason,
     hasBeenReviewed: Boolean(data.has_been_reviewed ?? data.hasBeenReviewed),
   };

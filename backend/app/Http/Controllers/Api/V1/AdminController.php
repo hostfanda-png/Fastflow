@@ -346,36 +346,43 @@ class AdminController extends Controller
      */
     public function assignRider(Request $request, int $orderId): JsonResponse
     {
-        $order = Order::findOrFail($orderId);
-
-        // Order eligibility check
-        $unassignableStates = ['cancelled', 'delivered', 'refunded'];
-        if (in_array($order->order_status, $unassignableStates)) {
-            return $this->sendError("Order cannot be assigned in '{$order->order_status}' status.", [], 422);
-        }
-
         $riderId = $request->validate([
             'rider_id' => ['required', 'exists:riders,id']
         ])['rider_id'];
 
-        $rider = Rider::with('user')->findOrFail($riderId);
+        return DB::transaction(function () use ($orderId, $riderId, $request) {
+            $order = Order::where('id', $orderId)->lockForUpdate()->firstOrFail();
 
-        // Rider eligibility check
-        if (!$rider->is_active || in_array($rider->status, ['suspended', 'inactive', 'offline'])) {
-            return $this->sendError("Courier '{$rider->user->name}' is currently {$rider->status} or inactive and cannot receive orders.", [], 422);
-        }
+            // Order eligibility check
+            $unassignableStates = ['cancelled', 'delivered', 'refunded', 'on_the_way'];
+            if (in_array($order->order_status, $unassignableStates)) {
+                return $this->sendError("Order cannot be assigned in '{$order->order_status}' status.", [], 422);
+            }
 
-        $isReassignment = !empty($order->rider_id) && $order->rider_id != $rider->id;
-        $prevRiderId = $order->rider_id;
+            $rider = Rider::with('user')->where('id', $riderId)->lockForUpdate()->firstOrFail();
 
-        DB::transaction(function () use ($order, $rider, $isReassignment, $prevRiderId, $request) {
+            // Rider eligibility check
+            if (!$rider->is_active || in_array($rider->status, ['suspended', 'inactive', 'offline'])) {
+                return $this->sendError("Courier '{$rider->user->name}' is currently {$rider->status} or inactive and cannot receive orders.", [], 422);
+            }
+
+            $isReassignment = !empty($order->rider_id) && $order->rider_id != $rider->id;
+            $prevRiderId = $order->rider_id;
+
             if ($isReassignment) {
-                // Decrement workload on previous rider
-                $prevRider = Rider::find($prevRiderId);
+                // Decrement workload on previous rider with lock
+                $prevRider = Rider::where('id', $prevRiderId)->lockForUpdate()->first();
                 if ($prevRider) {
                     $prevRider->assigned_order_count = max(0, $prevRider->assigned_order_count - 1);
+                    if ($prevRider->assigned_order_count === 0 && $prevRider->status === 'on_delivery') {
+                        $prevRider->status = 'available';
+                    }
                     $prevRider->save();
                 }
+            }
+
+            if ($order->rider_id != $rider->id) {
+                $rider->increment('assigned_order_count');
             }
 
             $order->rider_id = $rider->id;
@@ -383,8 +390,6 @@ class AdminController extends Controller
                 $order->order_status = 'assigned_to_rider';
             }
             $order->save();
-
-            $rider->increment('assigned_order_count');
 
             // Log status history
             OrderStatusHistory::create([
@@ -399,39 +404,40 @@ class AdminController extends Controller
 
             $auditAction = $isReassignment ? 'delivery.reassign' : 'delivery.assign';
             AuditService::log($auditAction, 'Orders', (string)$order->id, "Assigned courier {$rider->user->name} ({$rider->vehicle_number}) to order {$order->order_number}", $request->user());
+
+            $order->refresh();
+            $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+            return $this->sendResponse($order, "Order successfully assigned to {$rider->user->name}");
         });
-
-        $order->refresh();
-        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
-
-        return $this->sendResponse($order, "Order successfully assigned to {$rider->user->name}");
     }
 
     /**
-     * Server-Authoritative Automated Courier Dispatch
+     * Server-Authoritative Automated Courier Dispatch with Row-Level Locking
      * Never falls back to client mock data or fake riders.
      */
     public function autoDispatch(Request $request, int $orderId): JsonResponse
     {
-        $order = Order::findOrFail($orderId);
+        return DB::transaction(function () use ($orderId, $request) {
+            $order = Order::where('id', $orderId)->lockForUpdate()->firstOrFail();
 
-        $unassignableStates = ['cancelled', 'delivered', 'refunded', 'on_the_way'];
-        if (in_array($order->order_status, $unassignableStates)) {
-            return $this->sendError("Order in '{$order->order_status}' status cannot be auto-dispatched.", [], 422);
-        }
+            $unassignableStates = ['cancelled', 'delivered', 'refunded', 'on_the_way'];
+            if (in_array($order->order_status, $unassignableStates)) {
+                return $this->sendError("Order in '{$order->order_status}' status cannot be auto-dispatched.", [], 422);
+            }
 
-        // Find best eligible courier (available, active, lowest active workload)
-        $bestRider = Rider::with('user')
-            ->where('status', 'available')
-            ->where('is_active', true)
-            ->orderBy('assigned_order_count', 'asc')
-            ->first();
+            // Find best eligible courier (available, active, lowest active workload) and acquire lock
+            $bestRider = Rider::with('user')
+                ->where('status', 'available')
+                ->where('is_active', true)
+                ->orderBy('assigned_order_count', 'asc')
+                ->lockForUpdate()
+                ->first();
 
-        if (!$bestRider) {
-            return $this->sendError('No active couriers are currently online and available for dispatch.', [], 404);
-        }
+            if (!$bestRider) {
+                return $this->sendError('No active couriers are currently online and available for dispatch.', [], 404);
+            }
 
-        DB::transaction(function () use ($order, $bestRider, $request) {
             $order->rider_id = $bestRider->id;
             $order->order_status = 'assigned_to_rider';
             $order->save();
@@ -447,32 +453,32 @@ class AdminController extends Controller
             ]);
 
             AuditService::log('delivery.assign', 'Dispatch', (string)$order->id, "System auto-dispatched order {$order->order_number} to courier {$bestRider->user->name}", $request->user());
+
+            $order->refresh();
+            $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+            return $this->sendResponse($order, "Auto-dispatched to courier {$bestRider->user->name} ({$bestRider->vehicle_number})");
         });
-
-        $order->refresh();
-        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
-
-        return $this->sendResponse($order, "Auto-dispatched to courier {$bestRider->user->name} ({$bestRider->vehicle_number})");
     }
 
     /**
-     * Unassign courier from order
+     * Unassign courier from order with Row-Level Locking
      */
     public function unassignRider(Request $request, int $orderId): JsonResponse
     {
-        $order = Order::findOrFail($orderId);
+        return DB::transaction(function () use ($orderId, $request) {
+            $order = Order::where('id', $orderId)->lockForUpdate()->firstOrFail();
 
-        if (empty($order->rider_id)) {
-            return $this->sendError('Order currently has no courier assigned.', [], 422);
-        }
+            if (empty($order->rider_id)) {
+                return $this->sendError('Order currently has no courier assigned.', [], 422);
+            }
 
-        if (in_array($order->order_status, ['on_the_way', 'delivered', 'refunded', 'cancelled'])) {
-            return $this->sendError("Cannot unassign courier when order is '{$order->order_status}'.", [], 422);
-        }
+            if (in_array($order->order_status, ['on_the_way', 'delivered', 'refunded', 'cancelled'])) {
+                return $this->sendError("Cannot unassign courier when order is '{$order->order_status}'.", [], 422);
+            }
 
-        $rider = Rider::with('user')->find($order->rider_id);
+            $rider = Rider::with('user')->where('id', $order->rider_id)->lockForUpdate()->first();
 
-        DB::transaction(function () use ($order, $rider, $request) {
             $prevRiderName = $rider?->user?->name ?? 'Courier';
             $order->rider_id = null;
             $order->order_status = 'ready_for_pickup';
@@ -480,6 +486,9 @@ class AdminController extends Controller
 
             if ($rider) {
                 $rider->assigned_order_count = max(0, $rider->assigned_order_count - 1);
+                if ($rider->assigned_order_count === 0 && $rider->status === 'on_delivery') {
+                    $rider->status = 'available';
+                }
                 $rider->save();
             }
 
@@ -492,12 +501,12 @@ class AdminController extends Controller
             ]);
 
             AuditService::log('delivery.unassign', 'Orders', (string)$order->id, "Unassigned courier {$prevRiderName} from order {$order->order_number}", $request->user());
+
+            $order->refresh();
+            $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+            return $this->sendResponse($order, 'Courier unassigned successfully');
         });
-
-        $order->refresh();
-        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
-
-        return $this->sendResponse($order, 'Courier unassigned successfully');
     }
 
     public function getFinancials(): JsonResponse
