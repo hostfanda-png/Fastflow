@@ -141,6 +141,7 @@ Route::prefix('v1')->group(function () {
         // Delivery Rider Assignment
         Route::get('restaurants/{restaurant}/eligible-riders', [OwnerRestaurantController::class, 'getEligibleRiders']);
         Route::post('restaurants/{restaurant}/orders/{order}/assign-rider', [OwnerRestaurantController::class, 'assignRider']);
+        Route::post('restaurants/{restaurant}/orders/{order}/unassign-rider', [OwnerRestaurantController::class, 'unassignRider']);
     });
 
     // Delivery Courier Routes
@@ -167,6 +168,7 @@ Route::prefix('v1')->group(function () {
         Route::put('riders/{rider}', [AdminController::class, 'updateRider']);
         Route::delete('riders/{rider}', [AdminController::class, 'deleteRider']);
         Route::post('orders/{order}/assign-rider', [AdminController::class, 'assignRider']);
+        Route::post('orders/{order}/unassign-rider', [AdminController::class, 'unassignRider']);
         Route::post('orders/{order}/auto-dispatch', [AdminController::class, 'autoDispatch']);
         Route::get('financials', [AdminController::class, 'getFinancials']);
         Route::get('audit-logs', [AdminController::class, 'getAuditLogs']);

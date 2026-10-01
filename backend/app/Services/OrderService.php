@@ -329,7 +329,7 @@ class OrderService
             'confirmed' => ['preparing', 'cancelled'],
             'preparing' => ['ready_for_pickup', 'cancelled'],
             'ready_for_pickup' => ['assigned_to_rider', 'picked_up', 'cancelled'],
-            'assigned_to_rider' => ['picked_up', 'cancelled'],
+            'assigned_to_rider' => ['picked_up', 'ready_for_pickup', 'cancelled'],
             'picked_up' => ['on_the_way'],
             'on_the_way' => ['delivered'],
             'delivered' => ['refunded'],

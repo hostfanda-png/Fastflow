@@ -136,4 +136,11 @@ export const restaurantApi = {
   ): Promise<ApiResponse<any>> => {
     return apiClient.post<any>(`/owner/restaurants/${restaurantId}/orders/${orderId}/assign-rider`, { rider_id: riderId });
   },
+
+  unassignRider: async (
+    restaurantId: string | number,
+    orderId: string | number
+  ): Promise<ApiResponse<any>> => {
+    return apiClient.post<any>(`/owner/restaurants/${restaurantId}/orders/${orderId}/unassign-rider`);
+  },
 };

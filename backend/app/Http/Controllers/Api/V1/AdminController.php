@@ -449,6 +449,48 @@ class AdminController extends Controller
         return $this->sendResponse($order->load('rider.user'), "Auto-dispatched to courier {$bestRider->user->name} ({$bestRider->vehicle_number})");
     }
 
+    /**
+     * Unassign courier from order
+     */
+    public function unassignRider(Request $request, int $orderId): JsonResponse
+    {
+        $order = Order::findOrFail($orderId);
+
+        if (empty($order->rider_id)) {
+            return $this->sendError('Order currently has no courier assigned.', [], 422);
+        }
+
+        if (in_array($order->order_status, ['on_the_way', 'delivered', 'refunded', 'cancelled'])) {
+            return $this->sendError("Cannot unassign courier when order is '{$order->order_status}'.", [], 422);
+        }
+
+        $rider = Rider::with('user')->find($order->rider_id);
+
+        DB::transaction(function () use ($order, $rider, $request) {
+            $prevRiderName = $rider?->user?->name ?? 'Courier';
+            $order->rider_id = null;
+            $order->order_status = 'ready_for_pickup';
+            $order->save();
+
+            if ($rider) {
+                $rider->assigned_order_count = max(0, $rider->assigned_order_count - 1);
+                $rider->save();
+            }
+
+            OrderStatusHistory::create([
+                'order_id' => $order->id,
+                'status' => 'ready_for_pickup',
+                'note' => "Courier {$prevRiderName} unassigned by admin",
+                'actor' => $request->user()->name,
+                'created_at' => now(),
+            ]);
+
+            AuditService::log('delivery.unassign', 'Orders', (string)$order->id, "Unassigned courier {$prevRiderName} from order {$order->order_number}", $request->user());
+        });
+
+        return $this->sendResponse($order->fresh(), 'Courier unassigned successfully');
+    }
+
     public function getFinancials(): JsonResponse
     {
         $financials = FinancialTransaction::orderByDesc('created_at')->get();

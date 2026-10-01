@@ -13,11 +13,13 @@ return new class extends Migration
     {
         Schema::table('riders', function (Blueprint $table) {
             if (!Schema::hasColumn('riders', 'is_active')) {
-                $table->boolean('is_active')->default(true)->after('status');
+                $table->boolean('is_active')->default(true)->after('status')->index();
             }
             if (!Schema::hasColumn('riders', 'deleted_at')) {
                 $table->softDeletes()->after('updated_at');
             }
+            // Ensure status column accommodates all Phase 3 states (offline, available, busy, on_delivery, suspended, inactive)
+            $table->string('status', 30)->default('offline')->change();
         });
     }
 

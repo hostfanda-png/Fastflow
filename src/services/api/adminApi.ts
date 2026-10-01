@@ -59,6 +59,10 @@ export const adminApi = {
     return apiClient.post(`/admin/orders/${orderId}/assign-rider`, { rider_id: riderId });
   },
 
+  unassignRider: async (orderId: string | number): Promise<ApiResponse<any>> => {
+    return apiClient.post(`/admin/orders/${orderId}/unassign-rider`);
+  },
+
   autoDispatch: async (orderId: string | number): Promise<ApiResponse<any>> => {
     return apiClient.post(`/admin/orders/${orderId}/auto-dispatch`);
   },

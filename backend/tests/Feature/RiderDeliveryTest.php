@@ -415,4 +415,107 @@ class RiderDeliveryTest extends TestCase
         $response->assertStatus(404);
         $this->assertEquals('assigned_to_rider', $orderA->fresh()->order_status);
     }
+
+    /**
+     * 8. Courier Unassignment: Admin & Kitchen can unassign a courier prior to transit
+     */
+    public function test_admin_and_restaurant_can_unassign_courier(): void
+    {
+        $admin = User::factory()->create(['role_id' => $this->adminRole->id]);
+        $owner = User::factory()->create(['role_id' => $this->ownerRole->id]);
+        $restaurant = Restaurant::create([
+            'owner_id' => $owner->id,
+            'name' => 'Fast Kitchen',
+            'slug' => 'fast-kitchen',
+            'address' => 'Street 1',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $riderUser = User::factory()->create(['role_id' => $this->riderRole->id]);
+        $rider = Rider::create([
+            'user_id' => $riderUser->id,
+            'vehicle_type' => 'Motorcycle',
+            'vehicle_number' => 'UNASS-1',
+            'status' => 'available',
+            'assigned_order_count' => 1,
+            'is_active' => true,
+        ]);
+
+        $customer = User::factory()->create(['role_id' => $this->customerRole->id]);
+        $order = Order::create([
+            'order_number' => 'FD-UNASS-01',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'rider_id' => $rider->id,
+            'customer_name' => 'Customer',
+            'customer_phone' => '03001234567',
+            'delivery_address_json' => json_encode(['street' => 'Street A', 'area' => 'Gulberg', 'city' => 'Lahore']),
+            'order_status' => 'assigned_to_rider',
+            'subtotal' => 500,
+            'grand_total' => 650,
+            'payment_method' => 'cod',
+        ]);
+
+        // Kitchen unassigns courier
+        $res = $this->actingAs($owner, 'sanctum')
+            ->postJson("/api/v1/owner/restaurants/{$restaurant->id}/orders/{$order->id}/unassign-rider");
+
+        $res->assertStatus(200);
+        $this->assertNull($order->fresh()->rider_id);
+        $this->assertEquals('ready_for_pickup', $order->fresh()->order_status);
+        $this->assertEquals(0, $rider->fresh()->assigned_order_count);
+    }
+
+    /**
+     * 9. Unassignment rejected when order is already in-transit
+     */
+    public function test_cannot_unassign_courier_when_on_the_way(): void
+    {
+        $admin = User::factory()->create(['role_id' => $this->adminRole->id]);
+        $customer = User::factory()->create(['role_id' => $this->customerRole->id]);
+        $restaurant = Restaurant::create([
+            'name' => 'Pizza Kitchen',
+            'slug' => 'pizza-kitchen',
+            'address' => 'Street 2',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $riderUser = User::factory()->create(['role_id' => $this->riderRole->id]);
+        $rider = Rider::create([
+            'user_id' => $riderUser->id,
+            'vehicle_type' => 'Motorcycle',
+            'vehicle_number' => 'TRANS-01',
+            'status' => 'on_delivery',
+            'assigned_order_count' => 1,
+            'is_active' => true,
+        ]);
+
+        $order = Order::create([
+            'order_number' => 'FD-TRANS-01',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'rider_id' => $rider->id,
+            'customer_name' => 'Customer',
+            'customer_phone' => '03001234567',
+            'delivery_address_json' => json_encode(['street' => 'Street 2', 'area' => 'Gulberg', 'city' => 'Lahore']),
+            'order_status' => 'on_the_way',
+            'subtotal' => 800,
+            'grand_total' => 950,
+            'payment_method' => 'cod',
+        ]);
+
+        $res = $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/admin/orders/{$order->id}/unassign-rider");
+
+        $res->assertStatus(422);
+        $this->assertEquals($rider->id, $order->fresh()->rider_id);
+    }
 }

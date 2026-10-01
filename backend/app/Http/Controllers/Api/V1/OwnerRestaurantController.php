@@ -779,6 +779,53 @@ class OwnerRestaurantController extends Controller
     }
 
     /**
+     * Restaurant manual courier unassignment with IDOR protection.
+     */
+    public function unassignRider(Request $request, $restaurantId, $orderId): JsonResponse
+    {
+        $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $orderId = $orderId instanceof Order ? $orderId->id : (int)$orderId;
+        $this->authorizeRestaurantAccess($user, $restaurantId);
+
+        $order = Order::where('restaurant_id', $restaurantId)->findOrFail($orderId);
+
+        if (empty($order->rider_id)) {
+            return $this->sendError('Order currently has no courier assigned.', [], 422);
+        }
+
+        if (in_array($order->order_status, ['on_the_way', 'delivered', 'refunded', 'cancelled'])) {
+            return $this->sendError("Cannot unassign courier when order is '{$order->order_status}'.", [], 422);
+        }
+
+        $rider = Rider::with('user')->find($order->rider_id);
+
+        DB::transaction(function () use ($order, $rider, $user) {
+            $prevRiderName = $rider?->user?->name ?? 'Courier';
+            $order->rider_id = null;
+            $order->order_status = 'ready_for_pickup';
+            $order->save();
+
+            if ($rider) {
+                $rider->assigned_order_count = max(0, $rider->assigned_order_count - 1);
+                $rider->save();
+            }
+
+            OrderStatusHistory::create([
+                'order_id' => $order->id,
+                'status' => 'ready_for_pickup',
+                'note' => "Courier {$prevRiderName} unassigned by kitchen",
+                'actor' => $user->name,
+                'created_at' => now(),
+            ]);
+
+            AuditService::log('delivery.unassign', 'Orders', (string)$order->id, "Kitchen unassigned courier {$prevRiderName} from order {$order->order_number}", $user);
+        });
+
+        return $this->sendResponse($order->fresh(), 'Courier unassigned successfully');
+    }
+
+    /**
      * Multi-tenant IDOR protection: Verify user owns or works at the restaurant.
      */
     protected function authorizeRestaurantAccess($user, int $restaurantId): void
