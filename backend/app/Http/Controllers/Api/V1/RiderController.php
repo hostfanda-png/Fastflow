@@ -263,36 +263,40 @@ class RiderController extends Controller
         $user = $request->user();
         $rider = Rider::where('user_id', $user->id)->firstOrFail();
 
-        $order = Order::where('rider_id', $rider->id)->findOrFail($orderId);
+        return DB::transaction(function () use ($rider, $orderId, $user) {
+            $order = Order::where('rider_id', $rider->id)->where('id', $orderId)->lockForUpdate()->firstOrFail();
 
-        if (!in_array($order->order_status, ['on_the_way', 'picked_up'])) {
-            return $this->sendError("Cannot deliver order in '{$order->order_status}' status. Required: 'on_the_way'.", [], 422);
-        }
+            if (!in_array($order->order_status, ['on_the_way', 'picked_up'])) {
+                return $this->sendError("Cannot deliver order in '{$order->order_status}' status. Required: 'on_the_way'.", [], 422);
+            }
 
-        $this->orderService->updateStatus($order, 'delivered', 'Courier handed order over to customer', $user->name);
+            $lockedRider = Rider::where('id', $rider->id)->lockForUpdate()->firstOrFail();
 
-        // Update rider stats & earnings
-        $deliveryEarnings = (float)$rider->commission_per_delivery + (float)$order->tip;
-        $rider->today_earnings += $deliveryEarnings;
-        $rider->total_earnings += $deliveryEarnings;
-        $rider->total_deliveries += 1;
-        $rider->assigned_order_count = max(0, $rider->assigned_order_count - 1);
+            $this->orderService->updateStatus($order, 'delivered', 'Courier handed order over to customer', $user->name);
 
-        // Check remaining active orders; if none, reset status to available
-        $remainingActive = Order::where('rider_id', $rider->id)
-            ->where('id', '!=', $order->id)
-            ->whereIn('order_status', ['assigned_to_rider', 'picked_up', 'on_the_way'])
-            ->exists();
+            // Update rider stats & earnings
+            $deliveryEarnings = (float)$lockedRider->commission_per_delivery + (float)$order->tip;
+            $lockedRider->today_earnings += $deliveryEarnings;
+            $lockedRider->total_earnings += $deliveryEarnings;
+            $lockedRider->total_deliveries += 1;
+            $lockedRider->assigned_order_count = max(0, $lockedRider->assigned_order_count - 1);
 
-        if (!$remainingActive && $rider->is_active) {
-            $rider->status = 'available';
-        }
+            // Check remaining active orders; if none, reset status to available
+            $remainingActive = Order::where('rider_id', $lockedRider->id)
+                ->where('id', '!=', $order->id)
+                ->whereIn('order_status', ['assigned_to_rider', 'picked_up', 'on_the_way'])
+                ->exists();
 
-        $rider->save();
+            if (!$remainingActive && $lockedRider->is_active) {
+                $lockedRider->status = 'available';
+            }
 
-        AuditService::log('delivery.status_change', 'Delivery', (string)$order->id, "Delivered and earned {$deliveryEarnings}", $user);
+            $lockedRider->save();
 
-        return $this->sendResponse($this->formatOrderForRider($order->fresh(['restaurant', 'items.addons'])), 'Order successfully delivered');
+            AuditService::log('delivery.status_change', 'Delivery', (string)$order->id, "Delivered and earned {$deliveryEarnings}", $user);
+
+            return $this->sendResponse($this->formatOrderForRider($order->fresh(['restaurant', 'items.addons'])), 'Order successfully delivered');
+        });
     }
 
     /**
