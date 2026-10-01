@@ -11,6 +11,7 @@ import {
   restaurantApi, 
   OwnerRestaurantDashboardData 
 } from '../../services/api/restaurantApi';
+import { paymentApi, RestaurantFinancialSummary } from '../../services/api/paymentApi';
 import { MenuManagement } from './MenuManagement';
 import { 
   Store, 
@@ -56,7 +57,7 @@ export const RestaurantDashboard: React.FC = () => {
     openAuthModal
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'menu' | 'settings' | 'staff'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'menu' | 'financials' | 'settings' | 'staff'>('orders');
   const [settingsSubTab, setSettingsSubTab] = useState<'profile' | 'hours' | 'delivery' | 'media' | 'cuisines'>('profile');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
 
@@ -65,6 +66,15 @@ export const RestaurantDashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Financials Server State (Phase 4)
+  const [financialSummary, setFinancialSummary] = useState<RestaurantFinancialSummary | null>(null);
+  const [loadingFinancials, setLoadingFinancials] = useState<boolean>(false);
+  const [showRefundModal, setShowRefundModal] = useState<boolean>(false);
+  const [refundOrderId, setRefundOrderId] = useState<number | string | null>(null);
+  const [refundAmount, setRefundAmount] = useState<string>('');
+  const [refundReason, setRefundReason] = useState<string>('');
+  const [refundSubmitting, setRefundSubmitting] = useState<boolean>(false);
 
   // Managed Restaurant
   const [ownerRestaurants, setOwnerRestaurants] = useState<any[]>([]);
@@ -294,6 +304,73 @@ export const RestaurantDashboard: React.FC = () => {
       setError(err?.response?.data?.message || err.message || 'Failed to unassign courier');
     } finally {
       setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  // Phase 4: Financials & Settlements Loader
+  const loadFinancials = useCallback(async () => {
+    if (!selectedRestaurant) return;
+    setLoadingFinancials(true);
+    try {
+      const res = await paymentApi.getRestaurantFinancials(selectedRestaurant.id);
+      if (res.success && res.data) {
+        setFinancialSummary(res.data);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err.message || 'Failed to load restaurant financials');
+    } finally {
+      setLoadingFinancials(false);
+    }
+  }, [selectedRestaurant]);
+
+  useEffect(() => {
+    if (activeTab === 'financials' && selectedRestaurant) {
+      loadFinancials();
+    }
+  }, [activeTab, selectedRestaurant, loadFinancials]);
+
+  // Phase 4: Authorized Refund Handler
+  const openRefundModal = (orderId: number | string, maxAmount: number) => {
+    setRefundOrderId(orderId);
+    setRefundAmount(String(maxAmount));
+    setRefundReason('');
+    setShowRefundModal(true);
+  };
+
+  const handleRefundSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRestaurant || !refundOrderId) return;
+    const amount = parseFloat(refundAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setError('Please provide a valid refund amount greater than zero.');
+      return;
+    }
+    if (!refundReason.trim()) {
+      setError('Please provide a reason for the refund.');
+      return;
+    }
+
+    setRefundSubmitting(true);
+    setError(null);
+    try {
+      const res = await paymentApi.refundOrder(refundOrderId, amount, refundReason.trim());
+      if (res.success) {
+        setSuccessMessage(`Refund of ${formatCurrency(amount)} processed successfully.`);
+        setShowRefundModal(false);
+        setRefundOrderId(null);
+        setRefundAmount('');
+        setRefundReason('');
+        loadRestaurantData();
+        if (activeTab === 'financials') {
+          loadFinancials();
+        }
+      } else {
+        setError(res.message || 'Refund was rejected by server.');
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err.message || 'Failed to issue refund on server.');
+    } finally {
+      setRefundSubmitting(false);
     }
   };
 
@@ -874,6 +951,18 @@ export const RestaurantDashboard: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('financials')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-2 ${
+            activeTab === 'financials' 
+              ? 'bg-stone-900 text-white shadow-xs' 
+              : 'text-stone-600 hover:bg-stone-100'
+          }`}
+        >
+          <DollarSign className="w-4 h-4" />
+          <span>Financials & Payouts</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('settings')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-2 ${
             activeTab === 'settings' 
@@ -1083,6 +1172,16 @@ export const RestaurantDashboard: React.FC = () => {
                           <span>Awaiting Courier Pickup</span>
                         </span>
                       )}
+
+                      {/* Phase 4: Authorized Refund Trigger for Delivered/Paid Orders */}
+                      {(order.order_status === 'delivered' || order.payment_status === 'paid') && order.order_status !== 'refunded' && (
+                        <button
+                          onClick={() => openRefundModal(order.id, parseFloat(order.grand_total || order.grandTotal || 0))}
+                          className="px-3 py-1.5 bg-stone-100 hover:bg-red-50 text-red-600 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                        >
+                          Issue Refund
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1097,7 +1196,154 @@ export const RestaurantDashboard: React.FC = () => {
         <MenuManagement restaurantId={selectedRestaurant.id} />
       )}
 
-      {/* TAB 3: Settings (Phase 2A Foundation) */}
+      {/* TAB 3: Financials & Settlements (Phase 4 Foundation) */}
+      {activeTab === 'financials' && (
+        <div className="space-y-6">
+          {loadingFinancials && !financialSummary ? (
+            <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center shadow-xs">
+              <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mx-auto mb-3" />
+              <p className="text-xs text-stone-500">Retrieving authoritative merchant financial ledger and payout status...</p>
+            </div>
+          ) : (
+            <>
+              {/* Financial KPI Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
+                  <div className="text-stone-500 text-xs font-semibold mb-1">Gross Food Sales</div>
+                  <div className="text-lg font-bold font-mono text-stone-900 tabular-nums">
+                    {formatCurrency(financialSummary?.metrics?.gross_sales || 0)}
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">Paid customer subtotals</div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
+                  <div className="text-stone-500 text-xs font-semibold mb-1">Platform Commission</div>
+                  <div className="text-lg font-bold font-mono text-red-600 tabular-nums">
+                    -{formatCurrency(financialSummary?.metrics?.commission_deducted || 0)}
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">
+                    Rate: {financialSummary?.restaurant?.commission_rate ?? selectedRestaurant.commission_rate ?? 15}%
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
+                  <div className="text-stone-500 text-xs font-semibold mb-1">Net Earnings</div>
+                  <div className="text-lg font-bold font-mono text-emerald-600 tabular-nums">
+                    {formatCurrency(financialSummary?.metrics?.net_earnings || 0)}
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">Gross minus commission</div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
+                  <div className="text-stone-500 text-xs font-semibold mb-1">Pending Settlement</div>
+                  <div className="text-lg font-bold font-mono text-amber-600 tabular-nums">
+                    {formatCurrency(financialSummary?.metrics?.pending_settlement || 0)}
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">Unbatched payable</div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs col-span-2 md:col-span-1">
+                  <div className="text-stone-500 text-xs font-semibold mb-1">Settled Payouts</div>
+                  <div className="text-lg font-bold font-mono text-indigo-600 tabular-nums">
+                    {formatCurrency(financialSummary?.metrics?.settled_payout || 0)}
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">Disbursed to bank</div>
+                </div>
+              </div>
+
+              {/* Settlement Batches History */}
+              <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
+                <h3 className="text-sm font-bold text-stone-900 mb-1">Settlement Payout Batches</h3>
+                <p className="text-xs text-stone-500 mb-4">Official payout disbursements processed by Fastflow finance governance</p>
+
+                {(!financialSummary?.settlements || financialSummary.settlements.length === 0) ? (
+                  <p className="text-xs text-stone-400 py-3">No settlement batches have been generated yet for this period.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-stone-600">
+                      <thead className="bg-stone-50 text-stone-900 font-bold border-b border-stone-200 uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="py-3 px-3">Batch Number</th>
+                          <th className="py-3 px-3">Period</th>
+                          <th className="py-3 px-3">Gross Sales</th>
+                          <th className="py-3 px-3">Commission</th>
+                          <th className="py-3 px-3">Net Payout</th>
+                          <th className="py-3 px-3">Status</th>
+                          <th className="py-3 px-3">Ref / Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-100">
+                        {financialSummary.settlements.map((s: any) => (
+                          <tr key={s.id} className="hover:bg-stone-50/50">
+                            <td className="py-3 px-3 font-mono font-bold text-stone-900">{s.settlement_number}</td>
+                            <td className="py-3 px-3">{s.period_start} → {s.period_end}</td>
+                            <td className="py-3 px-3 font-mono">{formatCurrency(s.gross_sales)}</td>
+                            <td className="py-3 px-3 font-mono text-red-600">-{formatCurrency(s.platform_commission)}</td>
+                            <td className="py-3 px-3 font-mono font-bold text-emerald-700">{formatCurrency(s.net_payout)}</td>
+                            <td className="py-3 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                s.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                              }`}>
+                                {s.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 font-mono text-[11px] text-stone-500">
+                              {s.payment_reference || 'Pending Release'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Recent Ledger Transactions */}
+              <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
+                <h3 className="text-sm font-bold text-stone-900 mb-1">Recent Financial Ledger Entries</h3>
+                <p className="text-xs text-stone-500 mb-4">Immutable server ledger recordings per ticket</p>
+
+                {(!financialSummary?.recent_transactions || financialSummary.recent_transactions.length === 0) ? (
+                  <p className="text-xs text-stone-400 py-3">No ledger records available yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-stone-600">
+                      <thead className="bg-stone-50 text-stone-900 font-bold border-b border-stone-200 uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="py-3 px-3">Order Number</th>
+                          <th className="py-3 px-3">Type</th>
+                          <th className="py-3 px-3">Gross Total</th>
+                          <th className="py-3 px-3">Commission</th>
+                          <th className="py-3 px-3">Kitchen Net</th>
+                          <th className="py-3 px-3">Status</th>
+                          <th className="py-3 px-3">Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-100">
+                        {financialSummary.recent_transactions.map((tx: any) => (
+                          <tr key={tx.id} className="hover:bg-stone-50/50">
+                            <td className="py-3 px-3 font-mono font-bold text-stone-900">{tx.order_number}</td>
+                            <td className="py-3 px-3 uppercase text-[10px] font-bold text-stone-700">{tx.transaction_type || 'payment'}</td>
+                            <td className="py-3 px-3 font-mono">{formatCurrency(tx.gross_amount)}</td>
+                            <td className="py-3 px-3 font-mono text-red-600">-{formatCurrency(tx.platform_commission)}</td>
+                            <td className="py-3 px-3 font-mono font-bold text-emerald-700">{formatCurrency(tx.restaurant_payout)}</td>
+                            <td className="py-3 px-3 capitalize">{tx.status}</td>
+                            <td className="py-3 px-3 text-[11px] text-stone-400">
+                              {new Date(tx.created_at).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: Settings (Phase 2A Foundation) */}
       {activeTab === 'settings' && (
         <div className="bg-white rounded-3xl border border-stone-200 shadow-xs overflow-hidden">
           {/* Sub-nav */}
@@ -1658,6 +1904,63 @@ export const RestaurantDashboard: React.FC = () => {
 
           <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 text-xs text-stone-600">
             Kitchen staff permissions are assigned per restaurant branch. Staff users log in with their credential tokens and access authoritative tickets filtered by their branch identity.
+          </div>
+        </div>
+      )}
+
+      {/* Phase 4: Authorized Refund Modal */}
+      {showRefundModal && (
+        <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-stone-200">
+            <h3 className="text-base font-bold text-stone-900 mb-1">Issue Customer Refund</h3>
+            <p className="text-xs text-stone-500 mb-4">
+              Authorized refund for Order #{refundOrderId}. Server validates refundable balance and records a debit ledger transaction.
+            </p>
+
+            <form onSubmit={handleRefundSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Refund Amount (PKR)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Reason for Refund</label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="e.g. Missing side item, customer goodwill courtesy, damaged container..."
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRefundModal(false)}
+                  disabled={refundSubmitting}
+                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={refundSubmitting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs disabled:opacity-50"
+                >
+                  {refundSubmitting ? 'Processing Refund...' : 'Confirm Refund'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
