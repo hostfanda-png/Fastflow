@@ -401,7 +401,10 @@ class AdminController extends Controller
             AuditService::log($auditAction, 'Orders', (string)$order->id, "Assigned courier {$rider->user->name} ({$rider->vehicle_number}) to order {$order->order_number}", $request->user());
         });
 
-        return $this->sendResponse($order->load('rider.user'), "Order successfully assigned to {$rider->user->name}");
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+        return $this->sendResponse($order, "Order successfully assigned to {$rider->user->name}");
     }
 
     /**
@@ -446,7 +449,10 @@ class AdminController extends Controller
             AuditService::log('delivery.assign', 'Dispatch', (string)$order->id, "System auto-dispatched order {$order->order_number} to courier {$bestRider->user->name}", $request->user());
         });
 
-        return $this->sendResponse($order->load('rider.user'), "Auto-dispatched to courier {$bestRider->user->name} ({$bestRider->vehicle_number})");
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+        return $this->sendResponse($order, "Auto-dispatched to courier {$bestRider->user->name} ({$bestRider->vehicle_number})");
     }
 
     /**
@@ -488,7 +494,10 @@ class AdminController extends Controller
             AuditService::log('delivery.unassign', 'Orders', (string)$order->id, "Unassigned courier {$prevRiderName} from order {$order->order_number}", $request->user());
         });
 
-        return $this->sendResponse($order->fresh(), 'Courier unassigned successfully');
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+        return $this->sendResponse($order, 'Courier unassigned successfully');
     }
 
     public function getFinancials(): JsonResponse

@@ -77,6 +77,7 @@ export const RestaurantDashboard: React.FC = () => {
   const [allCuisines, setAllCuisines] = useState<Cuisine[]>([]);
   const [eligibleRiders, setEligibleRiders] = useState<any[]>([]);
   const [selectedRiderMap, setSelectedRiderMap] = useState<Record<string | number, string | number>>({});
+  const [orderActionLoading, setOrderActionLoading] = useState<Record<string | number, boolean>>({});
 
   // Profile Form State
   const [profileForm, setProfileForm] = useState({
@@ -257,42 +258,42 @@ export const RestaurantDashboard: React.FC = () => {
       return;
     }
     setError(null);
+    setOrderActionLoading((prev) => ({ ...prev, [orderId]: true }));
     try {
       const res = await restaurantApi.assignRider(selectedRestaurant.id, orderId, riderId);
-      if (res.success) {
+      if (res.success && res.data) {
         setSuccessMessage('Courier successfully assigned to order.');
-        const [ordersRes, ridersRes] = await Promise.all([
-          restaurantApi.getOwnerOrders(selectedRestaurant.id, orderStatusFilter),
-          restaurantApi.getEligibleRiders(selectedRestaurant.id)
-        ]);
-        if (ordersRes.success && ordersRes.data) setOrdersList(ordersRes.data);
+        setOrdersList((prev) => prev.map((o) => (o.id === orderId ? res.data : o)));
+        const ridersRes = await restaurantApi.getEligibleRiders(selectedRestaurant.id);
         if (ridersRes.success && ridersRes.data) setEligibleRiders(ridersRes.data);
       } else {
         setError(res.message || 'Failed to assign courier');
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Failed to assign courier');
+    } finally {
+      setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
     }
   };
 
   const handleUnassignRider = async (orderId: number | string) => {
     if (!selectedRestaurant) return;
     setError(null);
+    setOrderActionLoading((prev) => ({ ...prev, [orderId]: true }));
     try {
       const res = await restaurantApi.unassignRider(selectedRestaurant.id, orderId);
-      if (res.success) {
+      if (res.success && res.data) {
         setSuccessMessage('Courier unassigned from order successfully.');
-        const [ordersRes, ridersRes] = await Promise.all([
-          restaurantApi.getOwnerOrders(selectedRestaurant.id, orderStatusFilter),
-          restaurantApi.getEligibleRiders(selectedRestaurant.id)
-        ]);
-        if (ordersRes.success && ordersRes.data) setOrdersList(ordersRes.data);
+        setOrdersList((prev) => prev.map((o) => (o.id === orderId ? res.data : o)));
+        const ridersRes = await restaurantApi.getEligibleRiders(selectedRestaurant.id);
         if (ridersRes.success && ridersRes.data) setEligibleRiders(ridersRes.data);
       } else {
         setError(res.message || 'Failed to unassign courier');
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Failed to unassign courier');
+    } finally {
+      setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
     }
   };
 
@@ -994,10 +995,11 @@ export const RestaurantDashboard: React.FC = () => {
 
                           {!['on_the_way', 'delivered', 'cancelled'].includes(order.order_status) ? (
                             <button
+                              disabled={Boolean(orderActionLoading[order.id])}
                               onClick={() => handleUnassignRider(order.id)}
-                              className="px-3 py-1 bg-stone-200 hover:bg-red-100 text-red-700 font-bold rounded-lg text-[11px] transition-colors self-start sm:self-auto cursor-pointer"
+                              className="px-3 py-1 bg-stone-200 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-lg text-[11px] transition-colors self-start sm:self-auto cursor-pointer"
                             >
-                              Unassign Courier
+                              {orderActionLoading[order.id] ? 'Unassigning...' : 'Unassign Courier'}
                             </button>
                           ) : (
                             <span className="text-[11px] text-stone-400 font-medium">In Transit</span>
@@ -1026,10 +1028,11 @@ export const RestaurantDashboard: React.FC = () => {
                               </select>
 
                               <button
+                                disabled={Boolean(orderActionLoading[order.id])}
                                 onClick={() => handleAssignRider(order.id)}
-                                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
+                                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
                               >
-                                Assign Courier
+                                {orderActionLoading[order.id] ? 'Assigning...' : 'Assign Courier'}
                               </button>
                             </div>
                           )}

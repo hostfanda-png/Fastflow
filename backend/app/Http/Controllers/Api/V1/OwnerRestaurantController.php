@@ -680,6 +680,9 @@ class OwnerRestaurantController extends Controller
         $this->orderService->updateStatus($order, $status, $note, $user->name);
         AuditService::log('order.status_update', 'Kitchen', (string)$order->id, "Kitchen marked order as {$status}", $user);
 
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
         return $this->sendResponse($order, "Order status transitioned to {$status}");
     }
 
@@ -775,7 +778,10 @@ class OwnerRestaurantController extends Controller
             AuditService::log($auditAction, 'Orders', (string)$order->id, "Kitchen assigned courier {$rider->user->name} to order {$order->order_number}", $user);
         });
 
-        return $this->sendResponse($order->load('rider.user'), "Order successfully assigned to {$rider->user->name}");
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+        return $this->sendResponse($order, "Order successfully assigned to {$rider->user->name}");
     }
 
     /**
@@ -822,7 +828,10 @@ class OwnerRestaurantController extends Controller
             AuditService::log('delivery.unassign', 'Orders', (string)$order->id, "Kitchen unassigned courier {$prevRiderName} from order {$order->order_number}", $user);
         });
 
-        return $this->sendResponse($order->fresh(), 'Courier unassigned successfully');
+        $order->refresh();
+        $order->load(['restaurant', 'rider.user', 'items.addons', 'statusHistories']);
+
+        return $this->sendResponse($order, 'Courier unassigned successfully');
     }
 
     /**

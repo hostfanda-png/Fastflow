@@ -518,4 +518,117 @@ class RiderDeliveryTest extends TestCase
         $res->assertStatus(422);
         $this->assertEquals($rider->id, $order->fresh()->rider_id);
     }
+
+    /**
+     * 10. Double Unassignment Protection: Second unassign fails idempotently without corrupting state or counters
+     */
+    public function test_double_unassignment_prevented_and_state_preserved(): void
+    {
+        $admin = User::factory()->create(['role_id' => $this->adminRole->id]);
+        $customer = User::factory()->create(['role_id' => $this->customerRole->id]);
+        $restaurant = Restaurant::create([
+            'name' => 'Burger Spot',
+            'slug' => 'burger-spot',
+            'address' => 'Street 3',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $riderUser = User::factory()->create(['role_id' => $this->riderRole->id]);
+        $rider = Rider::create([
+            'user_id' => $riderUser->id,
+            'vehicle_type' => 'Motorcycle',
+            'vehicle_number' => 'DBL-01',
+            'status' => 'available',
+            'assigned_order_count' => 1,
+            'is_active' => true,
+        ]);
+
+        $order = Order::create([
+            'order_number' => 'FD-DBL-01',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'rider_id' => $rider->id,
+            'customer_name' => 'Customer',
+            'customer_phone' => '03001234567',
+            'delivery_address_json' => json_encode(['street' => 'Street 3', 'area' => 'Gulberg', 'city' => 'Lahore']),
+            'order_status' => 'assigned_to_rider',
+            'subtotal' => 600,
+            'grand_total' => 750,
+            'payment_method' => 'cod',
+        ]);
+
+        // First unassign succeeds
+        $res1 = $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/admin/orders/{$order->id}/unassign-rider");
+        $res1->assertStatus(200);
+        $res1->assertJsonPath('data.rider_id', null);
+        $res1->assertJsonPath('data.order_status', 'ready_for_pickup');
+        $this->assertEquals(0, $rider->fresh()->assigned_order_count);
+
+        // Immediate second unassign fails with 422, cannot corrupt state or decrement below 0
+        $res2 = $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/admin/orders/{$order->id}/unassign-rider");
+        $res2->assertStatus(422);
+        $this->assertEquals(0, $rider->fresh()->assigned_order_count);
+        $this->assertEquals('ready_for_pickup', $order->fresh()->order_status);
+    }
+
+    /**
+     * 11. Authoritative Payload Verification: Unassigned endpoint returns complete order object
+     */
+    public function test_unassign_endpoint_returns_authoritative_order_payload(): void
+    {
+        $admin = User::factory()->create(['role_id' => $this->adminRole->id]);
+        $customer = User::factory()->create(['role_id' => $this->customerRole->id]);
+        $restaurant = Restaurant::create([
+            'name' => 'Kebab Hut',
+            'slug' => 'kebab-hut',
+            'address' => 'Street 4',
+            'city' => 'Lahore',
+            'area' => 'Gulberg',
+            'lat' => 31.5,
+            'lng' => 74.3,
+            'status' => 'approved',
+        ]);
+
+        $riderUser = User::factory()->create(['role_id' => $this->riderRole->id]);
+        $rider = Rider::create([
+            'user_id' => $riderUser->id,
+            'vehicle_type' => 'Motorcycle',
+            'vehicle_number' => 'KB-01',
+            'status' => 'available',
+            'assigned_order_count' => 1,
+            'is_active' => true,
+        ]);
+
+        $order = Order::create([
+            'order_number' => 'FD-PAYLOAD-01',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'rider_id' => $rider->id,
+            'customer_name' => 'Customer',
+            'customer_phone' => '03001234567',
+            'delivery_address_json' => json_encode(['street' => 'Street 4', 'area' => 'Gulberg', 'city' => 'Lahore']),
+            'order_status' => 'assigned_to_rider',
+            'subtotal' => 700,
+            'grand_total' => 850,
+            'payment_method' => 'cod',
+        ]);
+
+        $res = $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/admin/orders/{$order->id}/unassign-rider");
+
+        $res->assertStatus(200);
+        $data = $res->json('data');
+        $this->assertNotNull($data);
+        $this->assertEquals($order->id, $data['id']);
+        $this->assertNull($data['rider_id']);
+        $this->assertEquals('ready_for_pickup', $data['order_status']);
+        $this->assertArrayHasKey('restaurant', $data);
+        $this->assertArrayHasKey('status_histories', $data);
+    }
 }

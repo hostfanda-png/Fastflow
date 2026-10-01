@@ -180,13 +180,38 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const [orderActionLoading, setOrderActionLoading] = useState<Record<string, boolean>>({});
+
   const handleManualAssign = async (orderId: string) => {
     const targetRiderId = selectedRiderForOrder[orderId];
     if (!targetRiderId) {
       showToast('Please select a courier from the dropdown first.', 'error');
       return;
     }
-    await assignRiderToOrder(orderId, targetRiderId);
+    setOrderActionLoading((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await assignRiderToOrder(orderId, targetRiderId);
+    } finally {
+      setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  const handleAutoDispatch = async (orderId: string) => {
+    setOrderActionLoading((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await autoDispatchRider(orderId);
+    } finally {
+      setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  const handleUnassignCourier = async (orderId: string) => {
+    setOrderActionLoading((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await unassignRiderFromOrder(orderId);
+    } finally {
+      setOrderActionLoading((prev) => ({ ...prev, [orderId]: false }));
+    }
   };
 
   const handleSaveCommission = () => {
@@ -661,18 +686,20 @@ export const AdminDashboard: React.FC = () => {
                       </select>
 
                       <button
+                        disabled={Boolean(orderActionLoading[ord.id])}
                         onClick={() => handleManualAssign(ord.id)}
-                        className="px-3 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                        className="px-3 py-2 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
                       >
-                        Assign Selected
+                        {orderActionLoading[ord.id] ? 'Assigning...' : 'Assign Selected'}
                       </button>
 
                       <button
-                        onClick={() => autoDispatchRider(ord.id)}
-                        className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                        disabled={Boolean(orderActionLoading[ord.id])}
+                        onClick={() => handleAutoDispatch(ord.id)}
+                        className="px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-stone-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Auto-Dispatch</span>
+                        <span>{orderActionLoading[ord.id] ? 'Dispatching...' : 'Auto-Dispatch'}</span>
                       </button>
                     </div>
                   </div>
@@ -720,10 +747,11 @@ export const AdminDashboard: React.FC = () => {
                           </span>
                         ) : (
                           <button
-                            onClick={() => unassignRiderFromOrder(ord.id)}
-                            className="px-3.5 py-2 bg-stone-200 hover:bg-red-100 text-red-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                            disabled={Boolean(orderActionLoading[ord.id])}
+                            onClick={() => handleUnassignCourier(ord.id)}
+                            className="px-3.5 py-2 bg-stone-200 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                           >
-                            Unassign Courier
+                            {orderActionLoading[ord.id] ? 'Unassigning...' : 'Unassign Courier'}
                           </button>
                         )}
                       </div>

@@ -18,7 +18,9 @@ import {
   Permission, 
   OrderStatus, 
   Address,
-  PaymentMethod 
+  PaymentMethod,
+  StatusHistoryEntry,
+  OrderItem 
 } from '../types';
 import { authApi } from '../services/api/authApi';
 import { restaurantApi } from '../services/api/restaurantApi';
@@ -178,6 +180,96 @@ const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   activeLanguage: 'en',
 };
 
+export const mapServerOrder = (data: any): Order => {
+  if (!data) throw new Error('Cannot map empty server order');
+
+  const address = typeof data.delivery_address_json === 'string'
+    ? (() => {
+        try { return JSON.parse(data.delivery_address_json); }
+        catch { return { street: data.delivery_address_json, area: '', city: '' }; }
+      })()
+    : data.delivery_address || data.deliveryAddress || {
+        street: typeof data.delivery_address_json === 'object' ? data.delivery_address_json?.street || '' : '',
+        area: typeof data.delivery_address_json === 'object' ? data.delivery_address_json?.area || '' : '',
+        city: typeof data.delivery_address_json === 'object' ? data.delivery_address_json?.city || '' : '',
+      };
+
+  const rawHistory = data.status_histories || data.statusHistories || data.status_history || data.statusHistory || [];
+  const mappedHistory: StatusHistoryEntry[] = Array.isArray(rawHistory)
+    ? rawHistory.map((h: any) => ({
+        status: h.status,
+        timestamp: h.created_at || h.timestamp || '',
+        note: h.note || undefined,
+        actor: h.actor || undefined,
+      }))
+    : [];
+
+  const rawItems = data.items || [];
+  const mappedItems: OrderItem[] = Array.isArray(rawItems)
+    ? rawItems.map((it: any) => ({
+        id: String(it.id || ''),
+        productId: String(it.product_id || it.productId || ''),
+        productName: it.product_name || it.productName || 'Item',
+        quantity: Number(it.quantity || 1),
+        unitPrice: Number(it.unit_price ?? it.unitPrice ?? 0),
+        totalPrice: Number(it.subtotal ?? it.totalPrice ?? (Number(it.unit_price ?? it.unitPrice ?? 0) * Number(it.quantity || 1))),
+        variantName: it.variant_name || it.variantName || undefined,
+        addons: Array.isArray(it.addons)
+          ? it.addons.map((a: any) => ({
+              name: a.addon_name || a.name || '',
+              price: Number(a.price || 0),
+            }))
+          : [],
+        instructions: it.special_instructions || it.instructions || undefined,
+      }))
+    : [];
+
+  const riderObj = data.rider;
+  const riderName = riderObj?.user?.name || riderObj?.name || data.rider_name || data.riderName;
+  const riderPhone = riderObj?.user?.phone || riderObj?.phone || data.rider_phone || data.riderPhone;
+
+  return {
+    id: String(data.id),
+    orderNumber: data.order_number || data.orderNumber || `ORD-${data.id}`,
+    customerId: String(data.customer_id || data.customerId || ''),
+    customerName: data.customer_name || data.customerName || 'Customer',
+    customerPhone: data.customer_phone || data.customerPhone || '',
+    deliveryAddress: {
+      id: address.id || 'addr-1',
+      label: address.label || 'Home',
+      street: address.street || '',
+      area: address.area || '',
+      city: address.city || '',
+      lat: Number(address.lat || 0),
+      lng: Number(address.lng || 0),
+      deliveryInstructions: data.delivery_instructions || data.deliveryInstructions || '',
+    },
+    deliveryInstructions: data.delivery_instructions || data.deliveryInstructions,
+    restaurantId: String(data.restaurant_id || data.restaurantId || data.restaurant?.id || ''),
+    restaurantName: data.restaurant?.name || data.restaurant_name || data.restaurantName || 'Restaurant',
+    items: mappedItems,
+    subtotal: Number(data.subtotal || 0),
+    discount: Number(data.discount || 0),
+    couponCode: data.coupon_code || data.couponCode,
+    deliveryFee: Number(data.delivery_fee ?? data.deliveryFee ?? 0),
+    tax: Number(data.tax || 0),
+    serviceFee: Number(data.service_fee ?? data.serviceFee ?? 0),
+    tip: Number(data.tip || 0),
+    grandTotal: Number(data.grand_total ?? data.grandTotal ?? 0),
+    paymentMethod: data.payment_method || data.paymentMethod || 'cod',
+    paymentStatus: data.payment_status || data.paymentStatus || 'pending',
+    orderStatus: data.order_status || data.orderStatus || 'pending',
+    riderId: data.rider_id ? String(data.rider_id) : (data.riderId ? String(data.riderId) : undefined),
+    riderName: data.rider_id ? riderName : undefined,
+    riderPhone: data.rider_id ? riderPhone : undefined,
+    statusHistory: mappedHistory,
+    createdAt: data.created_at || data.createdAt || '',
+    estimatedDeliveryTime: data.estimated_delivery_time || data.estimatedDeliveryTime || '30-40 min',
+    cancellationReason: data.cancellation_reason || data.cancellationReason,
+    hasBeenReviewed: Boolean(data.has_been_reviewed ?? data.hasBeenReviewed),
+  };
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Loading & error state
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -328,20 +420,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cmsPages, setCmsPages] = useState<CMSPage[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
 
-  const logAuditAction = (action: string, moduleName: string, recordId?: string, details?: string) => {
-    const newLog: AuditLog = {
-      id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      action,
-      module: moduleName,
-      recordId: recordId || '',
-      userId: currentUser?.id || 'sys',
-      userName: currentUser?.name || 'System User',
-      role: currentUser?.role || 'customer',
-      timestamp: new Date().toISOString(),
-      details: details || '',
-      ip: '127.0.0.1'
-    };
-    setAuditLogs((prev) => [newLog, ...prev.slice(0, 49)]);
+  const logAuditAction = async (_action: string, _moduleName: string, _recordId?: string, _details?: string) => {
+    if (currentUser?.role === 'super_admin') {
+      try {
+        const res = await adminApi.getAuditLogs();
+        if (res.success && res.data) {
+          setAuditLogs(Array.isArray(res.data) ? res.data : []);
+        }
+      } catch {
+        // Handled gracefully
+      }
+    }
   };
 
   // Location
@@ -429,7 +518,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
 
           if (ordRes.status === 'fulfilled' && ordRes.value.data) {
-            setOrders(ordRes.value.data);
+            const rawOrders = Array.isArray(ordRes.value.data) ? ordRes.value.data : [];
+            setOrders(rawOrders.map(mapServerOrder));
           }
 
           if (profRes.status === 'fulfilled' && profRes.value.data?.addresses) {
@@ -711,7 +801,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!apiRes || !apiRes.data) {
       throw new Error(apiRes?.message || 'Failed to place order on Fastflow server.');
     }
-    const createdOrder: Order = apiRes.data;
+    const createdOrder: Order = mapServerOrder(apiRes.data);
 
     setOrders((prev) => [createdOrder, ...prev]);
     setActiveOrder(createdOrder);
@@ -724,39 +814,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return createdOrder;
   };
 
-  // Update order status with immutable history
+  // Update order status with server authority
   const updateOrderStatus = async (orderId: string, newStatus: OrderStatus, note?: string) => {
-    const now = new Date().toISOString();
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
     try {
       const res = await restaurantApi.updateOrderStatus(order.restaurantId, orderId, newStatus, note);
-      if (res.success) {
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
         setOrders((prev) =>
-          prev.map((ord) => {
-            if (ord.id === orderId) {
-              const updatedHistory = [
-                ...ord.statusHistory,
-                { status: newStatus, timestamp: now, note, actor: currentUser?.name || 'Staff' }
-              ];
-
-              const updated: Order = {
-                ...ord,
-                orderStatus: newStatus,
-                statusHistory: updatedHistory,
-                paymentStatus: newStatus === 'delivered' ? 'paid' : ord.paymentStatus
-              };
-
-              if (activeOrder?.id === orderId) {
-                setActiveOrder(updated);
-              }
-              return updated;
-            }
-            return ord;
-          })
+          prev.map((ord) => (ord.id === orderId ? authoritativeOrder : ord))
         );
-        logAuditAction(`order.${newStatus}`, 'Orders', orderId, note || `Status transitioned to ${newStatus}`);
+        if (activeOrder?.id === orderId) {
+          setActiveOrder(authoritativeOrder);
+        }
       } else {
         showToast(res.message || 'Failed to update order status on server', 'error');
       }
@@ -787,9 +859,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (nextStatus === 'assigned_to_rider' && !targetOrder.riderId) {
         await autoDispatchRider(orderId);
+      } else {
+        await updateOrderStatus(orderId, nextStatus, `Automatic progression simulation to ${nextStatus}`);
       }
-
-      await updateOrderStatus(orderId, nextStatus, `Automatic progression simulation to ${nextStatus}`);
     } else {
       showToast('Order is already in final completed state.', 'info');
     }
@@ -806,28 +878,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const res = await orderApi.cancel(orderId, reason);
-      if (res.success) {
-        const now = new Date().toISOString();
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
         setOrders((prev) =>
-          prev.map((o) => {
-            if (o.id === orderId) {
-              const updated: Order = {
-                ...o,
-                orderStatus: 'cancelled',
-                cancellationReason: reason,
-                statusHistory: [
-                  ...o.statusHistory,
-                  { status: 'cancelled', timestamp: now, note: `Cancelled: ${reason}`, actor: currentUser?.name || 'Customer' }
-                ]
-              };
-              if (activeOrder?.id === orderId) setActiveOrder(updated);
-              return updated;
-            }
-            return o;
-          })
+          prev.map((o) => (o.id === orderId ? authoritativeOrder : o))
         );
+        if (activeOrder?.id === orderId) setActiveOrder(authoritativeOrder);
         showToast(`Order ${ord.orderNumber} cancelled.`, 'info');
-        logAuditAction('order.cancel', 'Orders', orderId, `Cancelled reason: ${reason}`);
+      } else if (res.success) {
+        const ordRes = await orderApi.getById(orderId);
+        if (ordRes.success && ordRes.data) {
+          const authoritativeOrder = mapServerOrder(ordRes.data);
+          setOrders((prev) =>
+            prev.map((o) => (o.id === orderId ? authoritativeOrder : o))
+          );
+          if (activeOrder?.id === orderId) setActiveOrder(authoritativeOrder);
+        }
+        showToast(`Order ${ord.orderNumber} cancelled.`, 'info');
       } else {
         showToast(res.message || 'Failed to cancel order on server', 'error');
       }
@@ -836,47 +903,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Assign rider
+  // Assign courier with server authority
   const assignRiderToOrder = async (orderId: string, riderId: string) => {
-    const rider = riders.find((r) => r.id === riderId);
-    if (!rider) return;
-
     try {
       const res = await adminApi.assignRider(orderId, riderId);
-      if (res.success) {
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
         setOrders((prev) =>
-          prev.map((ord) => {
-            if (ord.id === orderId) {
-              const updated: Order = {
-                ...ord,
-                riderId: rider.id,
-                riderName: rider.name,
-                riderPhone: rider.phone,
-                orderStatus: ord.orderStatus === 'pending' || ord.orderStatus === 'confirmed' || ord.orderStatus === 'ready_for_pickup' 
-                  ? 'assigned_to_rider' 
-                  : ord.orderStatus,
-                statusHistory: [
-                  ...ord.statusHistory,
-                  {
-                    status: 'assigned_to_rider',
-                    timestamp: new Date().toISOString(),
-                    note: `Courier ${rider.name} assigned to delivery`,
-                    actor: currentUser?.name || 'System Dispatcher'
-                  }
-                ]
-              };
-              if (activeOrder?.id === orderId) setActiveOrder(updated);
-              return updated;
-            }
-            return ord;
-          })
+          prev.map((ord) => (ord.id === orderId ? authoritativeOrder : ord))
         );
+        if (activeOrder?.id === orderId) {
+          setActiveOrder(authoritativeOrder);
+        }
 
-        setRiders((prev) =>
-          prev.map((r) => (r.id === riderId ? { ...r, assignedOrderCount: r.assignedOrderCount + 1 } : r))
-        );
+        // Authoritatively re-fetch riders so server workloads are synchronized
+        const riderRes = await adminApi.getRiders();
+        if (riderRes.success && riderRes.data) {
+          setRiders(Array.isArray(riderRes.data) ? riderRes.data : []);
+        }
 
-        showToast(`Courier ${rider.name} assigned to order.`, 'success');
+        showToast(res.message || 'Courier assigned to order successfully.', 'success');
       } else {
         showToast(res.message || 'Failed to assign courier on server', 'error');
       }
@@ -888,7 +934,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const autoDispatchRider = async (orderId: string): Promise<boolean> => {
     try {
       const res = await adminApi.autoDispatch(orderId);
-      if (res.success) return true;
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
+        setOrders((prev) =>
+          prev.map((ord) => (ord.id === orderId ? authoritativeOrder : ord))
+        );
+        if (activeOrder?.id === orderId) {
+          setActiveOrder(authoritativeOrder);
+        }
+
+        const riderRes = await adminApi.getRiders();
+        if (riderRes.success && riderRes.data) {
+          setRiders(Array.isArray(riderRes.data) ? riderRes.data : []);
+        }
+
+        showToast(res.message || 'Courier auto-dispatched successfully.', 'success');
+        return true;
+      } else {
+        showToast(res.message || 'Auto-dispatch failed on server', 'error');
+      }
     } catch (err: any) {
       showToast(err?.response?.data?.message || err?.message || 'Auto-dispatch failed on server', 'error');
     }
@@ -898,39 +962,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const unassignRiderFromOrder = async (orderId: string) => {
     try {
       const res = await adminApi.unassignRider(orderId);
-      if (res.success) {
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
         setOrders((prev) =>
-          prev.map((ord) => {
-            if (ord.id === orderId) {
-              const prevRiderId = ord.riderId;
-              if (prevRiderId) {
-                setRiders((rList) =>
-                  rList.map((r) => (r.id === prevRiderId ? { ...r, assignedOrderCount: Math.max(0, r.assignedOrderCount - 1) } : r))
-                );
-              }
-              const updated: Order = {
-                ...ord,
-                riderId: undefined,
-                riderName: undefined,
-                riderPhone: undefined,
-                orderStatus: 'ready_for_pickup',
-                statusHistory: [
-                  ...ord.statusHistory,
-                  {
-                    status: 'ready_for_pickup',
-                    timestamp: new Date().toISOString(),
-                    note: 'Courier unassigned from delivery',
-                    actor: currentUser?.name || 'Administrator',
-                  },
-                ],
-              };
-              if (activeOrder?.id === orderId) setActiveOrder(updated);
-              return updated;
-            }
-            return ord;
-          })
+          prev.map((ord) => (ord.id === orderId ? authoritativeOrder : ord))
         );
-        showToast('Courier unassigned from order successfully.', 'info');
+        if (activeOrder?.id === orderId) {
+          setActiveOrder(authoritativeOrder);
+        }
+
+        // Authoritatively re-fetch riders so persistent server workloads are synced
+        const riderRes = await adminApi.getRiders();
+        if (riderRes.success && riderRes.data) {
+          setRiders(Array.isArray(riderRes.data) ? riderRes.data : []);
+        }
+
+        showToast(res.message || 'Courier unassigned from order successfully.', 'info');
       } else {
         showToast(res.message || 'Failed to unassign courier on server', 'error');
       }
@@ -946,11 +993,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateRiderStatus = async (riderId: string, status: Rider['status']) => {
     try {
       const res = await riderApi.updateStatus(status as any);
-      if (res.success) {
-        setRiders((prev) =>
-          prev.map((r) => (r.id === riderId ? { ...r, status } : r))
-        );
-        showToast(`Courier status set to ${status}`, 'info');
+      if (res.success && res.data) {
+        // Authoritatively re-fetch riders from backend to update state without calculating
+        const riderRes = await adminApi.getRiders();
+        if (riderRes.success && riderRes.data) {
+          setRiders(Array.isArray(riderRes.data) ? riderRes.data : []);
+        }
+        showToast(`Courier status set to ${res.data.status || status}`, 'info');
       } else {
         showToast(res.message || 'Failed to update status on server', 'error');
       }
