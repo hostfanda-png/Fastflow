@@ -83,6 +83,21 @@ class Order extends Model
         return $this->hasOne(Payment::class);
     }
 
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    public function refunds()
+    {
+        return $this->hasMany(Refund::class)->orderByDesc('created_at');
+    }
+
+    public function financialTransactions()
+    {
+        return $this->hasMany(FinancialTransaction::class)->orderByDesc('created_at');
+    }
+
     public function commission()
     {
         return $this->hasOne(Commission::class);

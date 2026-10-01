@@ -143,4 +143,17 @@ export const restaurantApi = {
   ): Promise<ApiResponse<any>> => {
     return apiClient.post<any>(`/owner/restaurants/${restaurantId}/orders/${orderId}/unassign-rider`);
   },
+
+  getFinancials: async (restaurantId: string | number, params?: any): Promise<ApiResponse<any>> => {
+    return apiClient.get<any>(`/owner/restaurants/${restaurantId}/financials`, params);
+  },
+
+  refundOrder: async (
+    restaurantId: string | number,
+    orderId: string | number,
+    amount: number,
+    reason: string
+  ): Promise<ApiResponse<any>> => {
+    return apiClient.post<any>(`/owner/restaurants/${restaurantId}/orders/${orderId}/refund`, { amount, reason });
+  },
 };

@@ -5,170 +5,143 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Payment;
-use App\Models\FinancialTransaction;
-use App\Models\OrderStatusHistory;
-use App\Services\AuditService;
+use App\Models\Refund;
+use App\Services\PaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Exception;
 
 class PaymentController extends Controller
 {
+    protected PaymentService $paymentService;
+
+    public function __construct(PaymentService $paymentService)
+    {
+        $this->paymentService = $paymentService;
+    }
+
     /**
-     * Create a Stripe PaymentIntent / Intent Session for an order.
-     * Accessible only to the customer who owns the order.
+     * Create a Stripe PaymentIntent for an order.
+     * Accessible to the customer who owns the order or super admin.
      */
     public function createIntent(Request $request): JsonResponse
     {
-        $user = $request->user();
-
         $validated = $request->validate([
             'order_id' => ['required', 'exists:orders,id'],
         ]);
 
         $order = Order::findOrFail($validated['order_id']);
 
-        if ($order->customer_id !== $user->id && !$user->hasRole('super_admin')) {
-            return $this->sendError('Unauthorized access to this order.', [], 403);
+        try {
+            $intentData = $this->paymentService->createPaymentIntent($order, $request->user());
+            return $this->sendResponse($intentData, 'Payment intent created successfully');
+        } catch (Exception $e) {
+            return $this->sendError($e->getMessage(), [], 422);
         }
-
-        if ($order->payment_method !== 'stripe') {
-            return $this->sendError('This order is not configured for Stripe online payment.', [], 422);
-        }
-
-        if ($order->payment_status === 'paid') {
-            return $this->sendError('This order has already been paid.', [], 422);
-        }
-
-        $stripeSecret = env('STRIPE_SECRET');
-        $stripeKey = env('STRIPE_KEY');
-
-        if (empty($stripeSecret) || $stripeSecret === 'sk_test_placeholder' || empty($stripeKey) || $stripeKey === 'pk_test_placeholder') {
-            return $this->sendError(
-                'Stripe payment gateway is currently disabled or not configured in server environment settings (STRIPE_SECRET / STRIPE_KEY missing).',
-                ['configured' => false],
-                422
-            );
-        }
-
-        // Generate intent reference
-        $intentId = 'pi_' . bin2hex(random_bytes(12));
-        $clientSecret = $intentId . '_secret_' . bin2hex(random_bytes(10));
-
-        // Update Payment record
-        $payment = Payment::firstOrCreate(
-            ['order_id' => $order->id],
-            [
-                'gateway' => 'stripe',
-                'amount' => $order->grand_total,
-                'currency' => env('DEFAULT_CURRENCY_CODE', 'PKR'),
-                'status' => 'pending',
-            ]
-        );
-
-        $payment->transaction_id = $intentId;
-        $payment->status = 'pending';
-        $payment->payload = [
-            'client_secret' => $clientSecret,
-            'created_at' => now()->toISOString(),
-        ];
-        $payment->save();
-
-        return $this->sendResponse([
-            'order_id' => $order->id,
-            'order_number' => $order->order_number,
-            'amount' => $order->grand_total,
-            'currency' => env('DEFAULT_CURRENCY_CODE', 'PKR'),
-            'client_secret' => $clientSecret,
-            'publishable_key' => $stripeKey,
-            'intent_id' => $intentId,
-        ], 'Stripe payment intent initialized');
     }
 
     /**
-     * Webhook endpoint to receive verified Stripe events.
-     * Validates signatures, prevents duplicate processing (idempotency),
-     * and atomically updates order payment status and financial ledgers.
+     * Public Webhook endpoint for verified Stripe events with idempotency tracking.
      */
     public function stripeWebhook(Request $request): JsonResponse
     {
         $payload = $request->getContent();
         $sigHeader = $request->header('Stripe-Signature');
-        $webhookSecret = env('STRIPE_WEBHOOK_SECRET');
 
-        // If webhook secret is set, verify signature
-        if (!empty($webhookSecret) && $webhookSecret !== 'whsec_placeholder') {
-            if (empty($sigHeader)) {
-                return response()->json(['error' => 'Missing Stripe-Signature header'], 400);
-            }
+        $result = $this->paymentService->handleStripeWebhook($payload, $sigHeader);
 
-            // In production environment with Stripe SDK: \Stripe\Webhook::constructEvent($payload, $sigHeader, $webhookSecret);
-            $expectedSignature = hash_hmac('sha256', $payload, $webhookSecret);
-            if (!hash_equals($expectedSignature, (string)$sigHeader)) {
-                return response()->json(['error' => 'Invalid webhook signature'], 400);
-            }
+        $httpCode = $result['http_code'] ?? 200;
+        unset($result['http_code']);
+
+        return response()->json($result, $httpCode);
+    }
+
+    /**
+     * Mark Cash on Delivery payment collected by authorized staff/admin.
+     */
+    public function collectCod(Request $request, int $orderId): JsonResponse
+    {
+        $user = $request->user();
+        $order = Order::findOrFail($orderId);
+
+        // Authorization: super_admin or restaurant_owner (if owns restaurant) or assigned courier
+        $isAuthorized = $user->hasRole('super_admin') 
+            || ($user->hasRole('restaurant_owner') && $order->restaurant_id == $user->restaurant_id)
+            || ($user->hasRole('delivery_rider') && $order->rider_id == $user->rider?->id);
+
+        if (!$isAuthorized) {
+            return $this->sendError('Unauthorized to record cash payment collection for this order.', [], 403);
         }
 
-        $event = json_decode($payload, true);
-        if (!$event || !isset($event['type'])) {
-            return response()->json(['error' => 'Invalid event payload structure'], 400);
+        $validated = $request->validate([
+            'reference' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        try {
+            $payment = $this->paymentService->collectCodPayment($order, $user, $validated['reference'] ?? null);
+            return $this->sendResponse($payment, 'Cash on Delivery payment recorded as collected.');
+        } catch (Exception $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+    }
+
+    /**
+     * Process full or partial refund (Admin & Authorized Restaurant Owner).
+     */
+    public function refund(Request $request, int $orderId): JsonResponse
+    {
+        $user = $request->user();
+        $order = Order::findOrFail($orderId);
+
+        $isAuthorized = $user->hasRole('super_admin') 
+            || ($user->hasRole('restaurant_owner') && $order->restaurant_id == $user->restaurant_id);
+
+        if (!$isAuthorized) {
+            return $this->sendError('Unauthorized to issue refunds for this order.', [], 403);
         }
 
-        $eventType = $event['type'];
-        $object = $event['data']['object'] ?? [];
+        $validated = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'reason' => ['required', 'string', 'max:500'],
+        ]);
 
-        // Handle successful payment events
-        if (in_array($eventType, ['payment_intent.succeeded', 'checkout.session.completed', 'charge.succeeded'])) {
-            $orderId = $object['metadata']['order_id'] ?? null;
-            $orderNumber = $object['metadata']['order_number'] ?? null;
-            $transactionId = $object['id'] ?? null;
-
-            $query = Order::query();
-            if ($orderId) {
-                $query->where('id', $orderId);
-            } elseif ($orderNumber) {
-                $query->where('order_number', $orderNumber);
-            } elseif ($transactionId) {
-                $payment = Payment::where('transaction_id', $transactionId)->first();
-                if ($payment) {
-                    $query->where('id', $payment->order_id);
-                }
-            }
-
-            $order = $query->first();
-
-            if ($order) {
-                // Idempotency: skip if already processed
-                if ($order->payment_status === 'paid') {
-                    return response()->json(['status' => 'already_processed'], 200);
-                }
-
-                $order->payment_status = 'paid';
-                $order->payment_reference = $transactionId;
-                $order->save();
-
-                Payment::where('order_id', $order->id)->update([
-                    'status' => 'completed',
-                    'transaction_id' => $transactionId ?: Payment::where('order_id', $order->id)->value('transaction_id'),
-                ]);
-
-                FinancialTransaction::where('order_id', $order->id)->update([
-                    'status' => 'settled',
-                ]);
-
-                OrderStatusHistory::create([
-                    'order_id' => $order->id,
-                    'status' => $order->order_status,
-                    'note' => 'Payment verified & settled via Stripe Webhook (' . ($transactionId ?: 'Online') . ')',
-                    'actor' => 'Stripe Webhook',
-                    'created_at' => now(),
-                ]);
-
-                AuditService::log('payment.webhook_settled', 'Payments', (string)$order->id, "Stripe verified online payment for {$order->order_number}");
-
-                return response()->json(['status' => 'success', 'order_number' => $order->order_number], 200);
-            }
+        try {
+            $refund = $this->paymentService->processRefund($order, (float)$validated['amount'], $validated['reason'], $user);
+            return $this->sendResponse($refund, 'Refund processed successfully.');
+        } catch (Exception $e) {
+            return $this->sendError($e->getMessage(), [], 422);
         }
+    }
 
-        return response()->json(['status' => 'received', 'type' => $eventType], 200);
+    /**
+     * Customer payment transaction history (Strict Customer Privacy & Isolation).
+     */
+    public function getCustomerPaymentHistory(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $payments = Payment::where('customer_id', $user->id)
+            ->with(['order:id,order_number,order_status,grand_total,created_at'])
+            ->orderByDesc('created_at')
+            ->paginate(15);
+
+        // Sanitize output (never expose gateway secrets or internal webhook logs to customer)
+        $sanitized = $payments->through(function ($p) {
+            return [
+                'id' => $p->id,
+                'order_id' => $p->order_id,
+                'order_number' => $p->order?->order_number,
+                'payment_method' => $p->payment_method,
+                'amount' => (float)$p->amount,
+                'refunded_amount' => (float)$p->refunded_amount,
+                'currency' => $p->currency,
+                'status' => $p->status,
+                'transaction_id' => $p->transaction_id,
+                'paid_at' => $p->paid_at?->toIso8601String(),
+                'created_at' => $p->created_at->toIso8601String(),
+            ];
+        });
+
+        return $this->sendResponse($sanitized, 'Customer payment history retrieved');
     }
 }

@@ -18,6 +18,7 @@ use App\Http\Requests\RestaurantDeliveryZoneRequest;
 use App\Http\Requests\RestaurantMediaRequest;
 use App\Services\OrderService;
 use App\Services\AuditService;
+use App\Services\FinancialService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -26,10 +27,12 @@ use Illuminate\Support\Str;
 class OwnerRestaurantController extends Controller
 {
     protected OrderService $orderService;
+    protected FinancialService $financialService;
 
-    public function __construct(OrderService $orderService)
+    public function __construct(OrderService $orderService, FinancialService $financialService)
     {
         $this->orderService = $orderService;
+        $this->financialService = $financialService;
     }
 
     /**
@@ -840,6 +843,19 @@ class OwnerRestaurantController extends Controller
 
             return $this->sendResponse($order, 'Courier unassigned successfully');
         });
+    }
+
+    /**
+     * Phase 4: Isolated Restaurant Financials and Earnings Breakdown
+     */
+    public function getFinancials(Request $request, $restaurantId): JsonResponse
+    {
+        $user = $request->user();
+        $restaurantId = $restaurantId instanceof Restaurant ? $restaurantId->id : (int)$restaurantId;
+        $this->authorizeOwnerAccess($user, $restaurantId);
+
+        $summary = $this->financialService->getRestaurantFinancialSummary($restaurantId, $request->all());
+        return $this->sendResponse($summary, 'Restaurant financial breakdown retrieved');
     }
 
     /**

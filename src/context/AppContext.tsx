@@ -33,6 +33,7 @@ import { reviewApi } from '../services/api/reviewApi';
 import { couponApi } from '../services/api/couponApi';
 import { adminApi } from '../services/api/adminApi';
 import { customerApi } from '../services/api/customerApi';
+import { paymentApi } from '../services/api/paymentApi';
 
 interface Toast {
   id: string;
@@ -128,6 +129,8 @@ interface AppContextType {
   assignRiderToOrder: (orderId: string, riderId: string) => Promise<void>;
   unassignRiderFromOrder: (orderId: string) => Promise<void>;
   autoDispatchRider: (orderId: string) => Promise<boolean>;
+  refundOrder: (orderId: string, amount: number, reason: string) => Promise<boolean>;
+  collectCodPayment: (orderId: string, reference?: string) => Promise<boolean>;
 
   // Riders
   riders: Rider[];
@@ -986,6 +989,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const refundOrder = async (orderId: string, amount: number, reason: string): Promise<boolean> => {
+    try {
+      const res = await paymentApi.refundOrder(orderId, amount, reason);
+      if (res.success) {
+        showToast(`Refund of PKR ${amount} processed successfully.`, 'success');
+        const ordRes = await orderApi.getById(orderId);
+        if (ordRes.success && ordRes.data) {
+          const authoritativeOrder = mapServerOrder(ordRes.data);
+          setOrders((prev) => prev.map((o) => (o.id === orderId ? authoritativeOrder : o)));
+          if (activeOrder?.id === orderId) setActiveOrder(authoritativeOrder);
+        }
+        return true;
+      } else {
+        showToast(res.message || 'Refund failed on server', 'error');
+        return false;
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Refund failed on server', 'error');
+      return false;
+    }
+  };
+
+  const collectCodPayment = async (orderId: string, reference?: string): Promise<boolean> => {
+    try {
+      const res = await paymentApi.markCodCollected(orderId, reference);
+      if (res.success) {
+        showToast('Cash on Delivery payment recorded as collected.', 'success');
+        const ordRes = await orderApi.getById(orderId);
+        if (ordRes.success && ordRes.data) {
+          const authoritativeOrder = mapServerOrder(ordRes.data);
+          setOrders((prev) => prev.map((o) => (o.id === orderId ? authoritativeOrder : o)));
+          if (activeOrder?.id === orderId) setActiveOrder(authoritativeOrder);
+        }
+        return true;
+      } else {
+        showToast(res.message || 'Failed to record cash collection', 'error');
+        return false;
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to record cash collection', 'error');
+      return false;
+    }
+  };
+
   const currentRider = currentUser && currentUser.role === 'delivery_rider'
     ? riders.find((r) => r.userId === currentUser.id) || null
     : null;
@@ -1291,6 +1338,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignRiderToOrder,
         unassignRiderFromOrder,
         autoDispatchRider,
+        refundOrder,
+        collectCodPayment,
 
         riders,
         currentRider,

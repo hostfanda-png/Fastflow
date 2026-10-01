@@ -16,8 +16,11 @@ use App\Models\Setting;
 use App\Models\DeliveryZone;
 use App\Models\Page;
 use App\Models\OrderStatusHistory;
+use App\Models\Settlement;
+use App\Models\Refund;
 use App\Services\AuditService;
 use App\Services\OrderService;
+use App\Services\FinancialService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
@@ -25,6 +28,12 @@ use Illuminate\Support\Facades\DB;
 
 class AdminController extends Controller
 {
+    protected FinancialService $financialService;
+
+    public function __construct(FinancialService $financialService)
+    {
+        $this->financialService = $financialService;
+    }
     public function dashboard(): JsonResponse
     {
         $totalOrders = Order::count();
@@ -509,10 +518,94 @@ class AdminController extends Controller
         });
     }
 
-    public function getFinancials(): JsonResponse
+    /**
+     * Phase 4: Server-Side Aggregated Financial Analytics & Ledger Transactions
+     */
+    public function getFinancials(Request $request): JsonResponse
     {
-        $financials = FinancialTransaction::orderByDesc('created_at')->get();
-        return $this->sendResponse($financials, 'Financial transactions ledger');
+        $analytics = $this->financialService->getAdminFinancialAnalytics($request->all());
+        return $this->sendResponse($analytics, 'Platform financial analytics and ledger');
+    }
+
+    /**
+     * Phase 4: Restaurant Settlement Batches Management
+     */
+    public function getSettlements(Request $request): JsonResponse
+    {
+        $query = Settlement::with(['restaurant:id,name,city,commission_rate', 'processor:id,name']);
+
+        if ($request->has('restaurant_id')) {
+            $query->where('restaurant_id', $request->input('restaurant_id'));
+        }
+
+        if ($request->has('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
+        $settlements = $query->orderByDesc('created_at')->paginate($request->input('per_page', 15));
+        return $this->sendResponse($settlements, 'Restaurant settlement batches retrieved');
+    }
+
+    /**
+     * Phase 4: Create a new settlement batch for a restaurant
+     */
+    public function createSettlement(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'restaurant_id' => ['required', 'exists:restaurants,id'],
+            'period_start' => ['required', 'date'],
+            'period_end' => ['required', 'date', 'after_or_equal:period_start'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        try {
+            $settlement = $this->financialService->createSettlementBatch(
+                (int)$validated['restaurant_id'],
+                $validated['period_start'],
+                $validated['period_end'],
+                $request->user(),
+                $validated['notes'] ?? null
+            );
+            return $this->sendResponse($settlement, 'Settlement batch generated successfully');
+        } catch (\Exception $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+    }
+
+    /**
+     * Phase 4: Mark settlement batch as paid
+     */
+    public function markSettlementPaid(Request $request, int $settlementId): JsonResponse
+    {
+        $validated = $request->validate([
+            'payment_reference' => ['required', 'string', 'max:100'],
+        ]);
+
+        try {
+            $settlement = $this->financialService->markSettlementPaid(
+                $settlementId,
+                $validated['payment_reference'],
+                $request->user()
+            );
+            return $this->sendResponse($settlement, 'Settlement marked as paid successfully');
+        } catch (\Exception $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+    }
+
+    /**
+     * Phase 4: Get platform refunds list
+     */
+    public function getRefunds(Request $request): JsonResponse
+    {
+        $refunds = Refund::with([
+            'order:id,order_number,restaurant_id,grand_total',
+            'order.restaurant:id,name',
+            'customer:id,name,email',
+            'processor:id,name'
+        ])->orderByDesc('created_at')->paginate($request->input('per_page', 15));
+
+        return $this->sendResponse($refunds, 'Platform refunds log retrieved');
     }
 
     public function getAuditLogs(): JsonResponse

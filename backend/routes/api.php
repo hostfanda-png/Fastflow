@@ -65,6 +65,7 @@ Route::prefix('v1')->group(function () {
         // Payments
         Route::prefix('payments')->group(function () {
             Route::post('stripe/create-intent', [PaymentController::class, 'createIntent']);
+            Route::get('history', [PaymentController::class, 'getCustomerPaymentHistory']);
         });
 
         // Customer Profile & Address Management
@@ -142,6 +143,11 @@ Route::prefix('v1')->group(function () {
         Route::get('restaurants/{restaurant}/eligible-riders', [OwnerRestaurantController::class, 'getEligibleRiders']);
         Route::post('restaurants/{restaurant}/orders/{order}/assign-rider', [OwnerRestaurantController::class, 'assignRider']);
         Route::post('restaurants/{restaurant}/orders/{order}/unassign-rider', [OwnerRestaurantController::class, 'unassignRider']);
+
+        // Phase 4: Restaurant Financials & Refunds
+        Route::get('restaurants/{restaurant}/financials', [OwnerRestaurantController::class, 'getFinancials']);
+        Route::post('restaurants/{restaurant}/orders/{order}/refund', [PaymentController::class, 'refund']);
+        Route::post('restaurants/{restaurant}/orders/{order}/collect-cod', [PaymentController::class, 'collectCod']);
     });
 
     // Delivery Courier Routes
@@ -154,6 +160,7 @@ Route::prefix('v1')->group(function () {
         Route::post('orders/{order}/pickup', [RiderController::class, 'pickupOrder']);
         Route::post('orders/{order}/start-delivery', [RiderController::class, 'startDelivery']);
         Route::post('orders/{order}/deliver', [RiderController::class, 'deliverOrder']);
+        Route::post('orders/{order}/collect-cod', [PaymentController::class, 'collectCod']);
     });
 
     // Super Admin Routes
@@ -171,6 +178,12 @@ Route::prefix('v1')->group(function () {
         Route::post('orders/{order}/unassign-rider', [AdminController::class, 'unassignRider']);
         Route::post('orders/{order}/auto-dispatch', [AdminController::class, 'autoDispatch']);
         Route::get('financials', [AdminController::class, 'getFinancials']);
+        Route::get('settlements', [AdminController::class, 'getSettlements']);
+        Route::post('settlements', [AdminController::class, 'createSettlement']);
+        Route::put('settlements/{settlement}/pay', [AdminController::class, 'markSettlementPaid']);
+        Route::get('refunds', [AdminController::class, 'getRefunds']);
+        Route::post('orders/{order}/refund', [PaymentController::class, 'refund']);
+        Route::post('orders/{order}/collect-cod', [PaymentController::class, 'collectCod']);
         Route::get('audit-logs', [AdminController::class, 'getAuditLogs']);
     });
 });
