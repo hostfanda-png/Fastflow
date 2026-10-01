@@ -34,7 +34,8 @@ import {
   AlertCircle,
   RefreshCw,
   Image as ImageIcon,
-  Check
+  Check,
+  Bike
 } from 'lucide-react';
 
 const DAYS_OF_WEEK = [
@@ -74,6 +75,8 @@ export const RestaurantDashboard: React.FC = () => {
   const [hoursList, setHoursList] = useState<RestaurantHourSlot[]>([]);
   const [deliveryZonesList, setDeliveryZonesList] = useState<RestaurantDeliveryZone[]>([]);
   const [allCuisines, setAllCuisines] = useState<Cuisine[]>([]);
+  const [eligibleRiders, setEligibleRiders] = useState<any[]>([]);
+  const [selectedRiderMap, setSelectedRiderMap] = useState<Record<string | number, string | number>>({});
 
   // Profile Form State
   const [profileForm, setProfileForm] = useState({
@@ -179,12 +182,13 @@ export const RestaurantDashboard: React.FC = () => {
       setMediaCoverUrl(current.cover_image || current.coverImage || '');
 
       // 2. Fetch Authoritative Dashboard Stats
-      const [dashRes, ordersRes, hoursRes, zonesRes, cuisinesRes] = await Promise.all([
+      const [dashRes, ordersRes, hoursRes, zonesRes, cuisinesRes, ridersRes] = await Promise.all([
         restaurantApi.getDashboard(current.id),
         restaurantApi.getOwnerOrders(current.id, 'all'),
         restaurantApi.getHours(current.id),
         restaurantApi.getDeliveryZones(current.id),
         restaurantApi.getCuisines(),
+        restaurantApi.getEligibleRiders(current.id),
       ]);
 
       if (dashRes.success && dashRes.data) {
@@ -201,6 +205,9 @@ export const RestaurantDashboard: React.FC = () => {
       }
       if (cuisinesRes.success && cuisinesRes.data) {
         setAllCuisines(cuisinesRes.data);
+      }
+      if (ridersRes.success && ridersRes.data) {
+        setEligibleRiders(ridersRes.data);
       }
 
       // Products from restaurant details
@@ -238,6 +245,54 @@ export const RestaurantDashboard: React.FC = () => {
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Error updating order status');
+    }
+  };
+
+  // Courier Assignment & Unassignment Handlers
+  const handleAssignRider = async (orderId: number | string) => {
+    if (!selectedRestaurant) return;
+    const riderId = selectedRiderMap[orderId];
+    if (!riderId) {
+      setError('Please select an eligible courier first.');
+      return;
+    }
+    setError(null);
+    try {
+      const res = await restaurantApi.assignRider(selectedRestaurant.id, orderId, riderId);
+      if (res.success) {
+        setSuccessMessage('Courier successfully assigned to order.');
+        const [ordersRes, ridersRes] = await Promise.all([
+          restaurantApi.getOwnerOrders(selectedRestaurant.id, orderStatusFilter),
+          restaurantApi.getEligibleRiders(selectedRestaurant.id)
+        ]);
+        if (ordersRes.success && ordersRes.data) setOrdersList(ordersRes.data);
+        if (ridersRes.success && ridersRes.data) setEligibleRiders(ridersRes.data);
+      } else {
+        setError(res.message || 'Failed to assign courier');
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err.message || 'Failed to assign courier');
+    }
+  };
+
+  const handleUnassignRider = async (orderId: number | string) => {
+    if (!selectedRestaurant) return;
+    setError(null);
+    try {
+      const res = await restaurantApi.unassignRider(selectedRestaurant.id, orderId);
+      if (res.success) {
+        setSuccessMessage('Courier unassigned from order successfully.');
+        const [ordersRes, ridersRes] = await Promise.all([
+          restaurantApi.getOwnerOrders(selectedRestaurant.id, orderStatusFilter),
+          restaurantApi.getEligibleRiders(selectedRestaurant.id)
+        ]);
+        if (ordersRes.success && ordersRes.data) setOrdersList(ordersRes.data);
+        if (ridersRes.success && ridersRes.data) setEligibleRiders(ridersRes.data);
+      } else {
+        setError(res.message || 'Failed to unassign courier');
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err.message || 'Failed to unassign courier');
     }
   };
 
@@ -923,6 +978,63 @@ export const RestaurantDashboard: React.FC = () => {
                           <span className="font-mono text-stone-700">{formatCurrency(item.subtotal)}</span>
                         </div>
                       ))}
+                    </div>
+
+                    {/* Courier Assignment & Unassignment Block */}
+                    <div className="py-2.5 px-3 my-2 bg-stone-50 rounded-xl border border-stone-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      {order.rider || order.rider_id ? (
+                        <>
+                          <div className="flex items-center gap-2 text-stone-700">
+                            <Bike className="w-4 h-4 text-amber-600" />
+                            <span>
+                              Assigned Courier: <strong className="text-stone-900">{order.rider?.user?.name || order.rider_name || 'Courier'}</strong>
+                              {order.rider?.vehicle_number ? ` (${order.rider.vehicle_number})` : ''}
+                            </span>
+                          </div>
+
+                          {!['on_the_way', 'delivered', 'cancelled'].includes(order.order_status) ? (
+                            <button
+                              onClick={() => handleUnassignRider(order.id)}
+                              className="px-3 py-1 bg-stone-200 hover:bg-red-100 text-red-700 font-bold rounded-lg text-[11px] transition-colors self-start sm:self-auto cursor-pointer"
+                            >
+                              Unassign Courier
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-stone-400 font-medium">In Transit</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 text-stone-500">
+                            <Bike className="w-4 h-4 text-stone-400" />
+                            <span>No Courier Assigned</span>
+                          </div>
+
+                          {!['delivered', 'cancelled'].includes(order.order_status) && (
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={selectedRiderMap[order.id] || ''}
+                                onChange={(e) => setSelectedRiderMap(prev => ({ ...prev, [order.id]: e.target.value }))}
+                                className="text-xs p-1.5 bg-white border border-stone-200 rounded-lg text-stone-700"
+                              >
+                                <option value="">Select Eligible Courier...</option>
+                                {eligibleRiders.map((r: any) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.user?.name || r.name} ({r.vehicle_type} - {r.status})
+                                  </option>
+                                ))}
+                              </select>
+
+                              <button
+                                onClick={() => handleAssignRider(order.id)}
+                                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
+                              >
+                                Assign Courier
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
 
                     {/* Transition actions */}

@@ -34,6 +34,7 @@ export const AdminDashboard: React.FC = () => {
     updateOrderStatus, 
     riders, 
     assignRiderToOrder, 
+    unassignRiderFromOrder,
     autoDispatchRider, 
     financials, 
     coupons, 
@@ -678,6 +679,59 @@ export const AdminDashboard: React.FC = () => {
                 );
               })
             )}
+          </div>
+
+          {/* Assigned Orders Queue with Unassign Courier Action */}
+          <div className="mt-8 pt-6 border-t border-stone-200">
+            <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider mb-3">
+              Assigned Couriers & Active Deliveries
+            </h3>
+
+            <div className="space-y-3">
+              {orders.filter(o => o.riderId && !['delivered', 'cancelled'].includes(o.orderStatus)).length === 0 ? (
+                <p className="text-xs text-stone-500 py-2">No active courier assignments at this time.</p>
+              ) : (
+                orders.filter(o => o.riderId && !['delivered', 'cancelled'].includes(o.orderStatus)).map((ord) => {
+                  const assignedRider = riders.find(r => r.id === ord.riderId);
+                  const isTransitStarted = ['on_the_way', 'delivered'].includes(ord.orderStatus);
+
+                  return (
+                    <div key={ord.id} className="p-4 bg-stone-50 border border-stone-200 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-xs text-stone-900">{ord.orderNumber}</span>
+                          <span className="text-[10px] uppercase font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
+                            {ord.orderStatus.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                        <p className="text-xs text-stone-600 mt-0.5">
+                          {ord.restaurantName} → {ord.deliveryAddress.area}, {ord.deliveryAddress.city}
+                        </p>
+                        <div className="text-[11px] text-stone-500 mt-1 flex items-center gap-2">
+                          <Bike className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Assigned Courier: <strong>{ord.riderName || assignedRider?.name || 'Assigned Courier'}</strong> ({ord.riderPhone || assignedRider?.phone || 'No phone'})</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isTransitStarted ? (
+                          <span className="text-xs font-medium text-amber-700 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-200">
+                            Transit In-Progress (Cannot Unassign)
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => unassignRiderFromOrder(ord.id)}
+                            className="px-3.5 py-2 bg-stone-200 hover:bg-red-100 text-red-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                          >
+                            Unassign Courier
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           {/* Create Courier Modal */}

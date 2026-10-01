@@ -124,6 +124,7 @@ interface AppContextType {
   cancelOrder: (orderId: string, reason: string) => Promise<void>;
   simulateOrderStep: (orderId: string) => Promise<void>;
   assignRiderToOrder: (orderId: string, riderId: string) => Promise<void>;
+  unassignRiderFromOrder: (orderId: string) => Promise<void>;
   autoDispatchRider: (orderId: string) => Promise<boolean>;
 
   // Riders
@@ -894,6 +895,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   };
 
+  const unassignRiderFromOrder = async (orderId: string) => {
+    try {
+      const res = await adminApi.unassignRider(orderId);
+      if (res.success) {
+        setOrders((prev) =>
+          prev.map((ord) => {
+            if (ord.id === orderId) {
+              const prevRiderId = ord.riderId;
+              if (prevRiderId) {
+                setRiders((rList) =>
+                  rList.map((r) => (r.id === prevRiderId ? { ...r, assignedOrderCount: Math.max(0, r.assignedOrderCount - 1) } : r))
+                );
+              }
+              const updated: Order = {
+                ...ord,
+                riderId: undefined,
+                riderName: undefined,
+                riderPhone: undefined,
+                orderStatus: 'ready_for_pickup',
+                statusHistory: [
+                  ...ord.statusHistory,
+                  {
+                    status: 'ready_for_pickup',
+                    timestamp: new Date().toISOString(),
+                    note: 'Courier unassigned from delivery',
+                    actor: currentUser?.name || 'Administrator',
+                  },
+                ],
+              };
+              if (activeOrder?.id === orderId) setActiveOrder(updated);
+              return updated;
+            }
+            return ord;
+          })
+        );
+        showToast('Courier unassigned from order successfully.', 'info');
+      } else {
+        showToast(res.message || 'Failed to unassign courier on server', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to unassign courier on server', 'error');
+    }
+  };
+
   const currentRider = currentUser && currentUser.role === 'delivery_rider'
     ? riders.find((r) => r.userId === currentUser.id) || null
     : null;
@@ -1195,6 +1240,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cancelOrder,
         simulateOrderStep,
         assignRiderToOrder,
+        unassignRiderFromOrder,
         autoDispatchRider,
 
         riders,
