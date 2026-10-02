@@ -12,7 +12,7 @@ import {
   XCircle, 
   Star, 
   Phone, 
-  FastForward, 
+  RotateCcw, 
   MessageSquare,
   ArrowLeft 
 } from 'lucide-react';
@@ -27,7 +27,7 @@ export const OrderTracker: React.FC<OrderTrackerProps> = ({ orderId, onBack }) =
     orders, 
     activeOrder, 
     formatCurrency, 
-    simulateOrderStep, 
+    refreshOrderStatus, 
     cancelOrder, 
     addReview,
     riders 
@@ -113,17 +113,15 @@ export const OrderTracker: React.FC<OrderTrackerProps> = ({ orderId, onBack }) =
           <span>Back to Storefront</span>
         </button>
 
-        {/* Live Simulation Stepper Trigger for effortless evaluation */}
-        {!isDelivered && !isCancelled && (
-          <button
-            onClick={() => simulateOrderStep(targetOrder.id)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-lg text-xs font-bold shadow-xs transition-colors"
-            title="Advance the order state automatically to test courier progression"
-          >
-            <FastForward className="w-3.5 h-3.5" />
-            <span>Simulate Next Stage</span>
-          </button>
-        )}
+        {/* Live Status Refresh */}
+        <button
+          onClick={() => refreshOrderStatus(targetOrder.id)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+          title="Refresh real-time status from Fastflow backend"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>Refresh Live Status</span>
+        </button>
       </div>
 
       {/* Main Tracker Card */}

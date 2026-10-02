@@ -17,7 +17,7 @@ export interface RestaurantFilterParams {
   area?: string;
   open_now?: boolean;
   has_offers?: boolean;
-  sort?: 'rating' | 'delivery_time' | 'delivery_fee';
+  sort?: 'rating' | 'delivery_time' | 'delivery_fee' | 'min_order' | 'newest';
 }
 
 export interface OwnerRestaurantDashboardData {
@@ -56,6 +56,21 @@ export const restaurantApi = {
 
   getMenu: async (idOrSlug: string | number): Promise<ApiResponse<{ restaurant: any; categories: ProductCategory[]; products: Product[] }>> => {
     return apiClient.get<{ restaurant: any; categories: ProductCategory[]; products: Product[] }>(`/restaurants/${idOrSlug}/menu`);
+  },
+
+  checkDelivery: async (idOrSlug: string | number, params?: { address_id?: string | number; lat?: number; lng?: number; area?: string; subtotal?: number }): Promise<ApiResponse<{
+    can_deliver: boolean;
+    reason?: string | null;
+    distance_km?: number | null;
+    delivery_fee: number;
+    minimum_order: number;
+    estimated_delivery_time?: string;
+  }>> => {
+    return apiClient.get(`/restaurants/${idOrSlug}/delivery-check`, params);
+  },
+
+  getReviews: async (idOrSlug: string | number): Promise<ApiResponse<any[]>> => {
+    return apiClient.get(`/restaurants/${idOrSlug}/reviews`);
   },
 
   // Central Cuisines

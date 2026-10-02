@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\Cart;
 use App\Services\OrderService;
 use App\Services\AuditService;
+use App\Services\PaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Exception;
@@ -55,19 +56,32 @@ class OrderController extends Controller
     {
         $user = $request->user();
 
-        $orders = Order::where('customer_id', $user->id)
-            ->with(['restaurant', 'items.addons', 'rider.user'])
-            ->orderByDesc('created_at')
-            ->get();
+        $query = Order::where('customer_id', $user->id)
+            ->with(['restaurant', 'items.addons', 'rider.user', 'payment', 'refunds'])
+            ->orderByDesc('created_at');
 
-        return $this->sendResponse($orders, 'Customer orders retrieved');
+        if ($status = $request->query('status')) {
+            $query->where('order_status', $status);
+        }
+
+        $perPage = (int)$request->query('per_page', 15);
+        $orders = $query->paginate($perPage);
+
+        return $this->sendResponse([
+            'orders' => $orders->items(),
+            'pagination' => [
+                'current_page' => $orders->currentPage(),
+                'total' => $orders->total(),
+                'per_page' => $orders->perPage(),
+            ],
+        ], 'Customer orders retrieved');
     }
 
     public function show(Request $request, string $identifier): JsonResponse
     {
         $user = $request->user();
 
-        $order = Order::with(['restaurant', 'items.addons', 'rider.user', 'statusHistories'])
+        $order = Order::with(['restaurant', 'items.addons', 'rider.user', 'statusHistories', 'payment', 'refunds'])
             ->where(function ($q) use ($identifier) {
                 $q->where('id', $identifier)->orWhere('order_number', $identifier);
             })
@@ -88,15 +102,16 @@ class OrderController extends Controller
     public function cancel(Request $request, int $orderId): JsonResponse
     {
         $user = $request->user();
-        $order = Order::findOrFail($orderId);
+        $order = Order::with(['payment'])->findOrFail($orderId);
 
         // Security check: only order owner or super admin can cancel
         if ($order->customer_id !== $user->id && !$user->hasRole('super_admin')) {
             return $this->sendError('Unauthorized', [], 403);
         }
 
-        if (in_array($order->order_status, ['picked_up', 'on_the_way', 'delivered', 'cancelled'])) {
-            return $this->sendError('Cannot cancel an order that is already dispatched or finalized', [], 422);
+        // Only pending and confirmed orders can be cancelled by customer
+        if (!in_array($order->order_status, ['pending', 'confirmed']) && !$user->hasRole('super_admin')) {
+            return $this->sendError('Cannot cancel order after food preparation has commenced or courier has been dispatched.', [], 422);
         }
 
         $reason = $request->input('reason', 'Cancelled by customer');
@@ -104,8 +119,15 @@ class OrderController extends Controller
         $order->cancellation_reason = $reason;
         $order->save();
 
+        // If payment was already completed (e.g. online Stripe), initiate refund through PaymentService
+        if ($order->payment_status === 'paid') {
+            app(PaymentService::class)->processRefund($order, (float)$order->grand_total, "Order cancelled: {$reason}", $user);
+        } elseif ($order->payment) {
+            $order->payment->update(['status' => 'cancelled']);
+        }
+
         AuditService::log('order.cancelled', 'Orders', (string)$order->id, "Cancelled: {$reason}", $user);
 
-        return $this->sendResponse($order, 'Order cancelled successfully');
+        return $this->sendResponse($order->fresh(['payment', 'refunds', 'statusHistories']), 'Order cancelled successfully');
     }
 }

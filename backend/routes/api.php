@@ -31,6 +31,8 @@ Route::prefix('v1')->group(function () {
     // Public Browsing Routes
     Route::get('restaurants', [RestaurantController::class, 'index']);
     Route::get('restaurants/{restaurant}', [RestaurantController::class, 'show']);
+    Route::get('restaurants/{restaurant}/delivery-check', [RestaurantController::class, 'checkDelivery']);
+    Route::get('restaurants/{restaurant}/reviews', [RestaurantController::class, 'getReviews']);
     Route::get('restaurants/{restaurant}/menu', [MenuController::class, 'getPublicMenu']);
     Route::get('categories', [MenuController::class, 'getCategories']);
     Route::get('products', [MenuController::class, 'getPublicProducts']);
@@ -70,14 +72,33 @@ Route::prefix('v1')->group(function () {
             Route::get('history', [PaymentController::class, 'getCustomerPaymentHistory']);
         });
 
-        // Customer Profile & Address Management
+        // Customer Profile, Address, Favorites & Notifications
         Route::prefix('customer')->group(function () {
             Route::get('profile', [CustomerController::class, 'getProfile']);
             Route::put('profile', [CustomerController::class, 'updateProfile']);
+            Route::post('change-password', [CustomerController::class, 'changePassword']);
+            Route::post('deactivate', [CustomerController::class, 'deactivateAccount']);
+
+            // Address Management
             Route::get('addresses', [CustomerController::class, 'getAddresses']);
             Route::post('addresses', [CustomerController::class, 'storeAddress']);
             Route::put('addresses/{id}', [CustomerController::class, 'updateAddress']);
             Route::delete('addresses/{id}', [CustomerController::class, 'deleteAddress']);
+            Route::put('addresses/{id}/default', [CustomerController::class, 'setDefaultAddress']);
+
+            // Favorites Management
+            Route::get('favorites', [CustomerController::class, 'getFavorites']);
+            Route::post('favorites/restaurants/{restaurant}', [CustomerController::class, 'toggleRestaurantFavorite']);
+            Route::post('favorites/products/{product}', [CustomerController::class, 'toggleProductFavorite']);
+
+            // Notifications Management
+            Route::get('notifications', [CustomerController::class, 'getNotifications']);
+            Route::put('notifications/{id}/read', [CustomerController::class, 'markNotificationRead']);
+            Route::put('notifications/read-all', [CustomerController::class, 'markAllNotificationsRead']);
+            Route::delete('notifications/{id}', [CustomerController::class, 'deleteNotification']);
+
+            // Customer Reviews History
+            Route::get('reviews', [CustomerController::class, 'getReviews']);
         });
 
         // Restaurant Partner Application (any authenticated user can apply)

@@ -20,7 +20,9 @@ import {
   Address,
   PaymentMethod,
   StatusHistoryEntry,
-  OrderItem 
+  OrderItem,
+  FavoriteItem,
+  AppNotification
 } from '../types';
 import { authApi } from '../services/api/authApi';
 import { restaurantApi } from '../services/api/restaurantApi';
@@ -81,7 +83,7 @@ interface AppContextType {
   deleteProduct: (productId: string) => Promise<void>;
   toggleProductAvailability: (productId: string) => Promise<void>;
 
-  // Location
+  // Location & Addresses
   selectedCity: string;
   setSelectedCity: (city: string) => void;
   selectedArea: string;
@@ -89,7 +91,20 @@ interface AppContextType {
   savedAddresses: Address[];
   currentAddress: Address | null;
   setCurrentAddress: (addr: Address | null) => void;
-  addSavedAddress: (addr: Address) => void;
+  addSavedAddress: (addr: Omit<Address, 'id'> | Address) => Promise<void>;
+  deleteSavedAddress: (addressId: string) => Promise<void>;
+  setDefaultSavedAddress: (addressId: string) => Promise<void>;
+
+  // Favorites
+  favorites: { restaurants: FavoriteItem[]; products: FavoriteItem[] };
+  toggleFavoriteRestaurant: (restaurantId: string | number) => Promise<boolean>;
+  toggleFavoriteProduct: (productId: string | number) => Promise<boolean>;
+
+  // Notifications
+  notifications: AppNotification[];
+  unreadNotificationsCount: number;
+  markNotificationAsRead: (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
 
   // Cart
   cart: CartItem[];
@@ -125,6 +140,7 @@ interface AppContextType {
   setActiveOrder: (order: Order | null) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus, note?: string) => Promise<void>;
   cancelOrder: (orderId: string, reason: string) => Promise<void>;
+  refreshOrderStatus: (orderId: string) => Promise<void>;
   simulateOrderStep: (orderId: string) => Promise<void>;
   assignRiderToOrder: (orderId: string, riderId: string) => Promise<void>;
   unassignRiderFromOrder: (orderId: string) => Promise<void>;
@@ -181,6 +197,23 @@ const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   baseDeliveryFee: 150,
   defaultCommissionRate: 15,
   activeLanguage: 'en',
+};
+
+export const mapServerAddress = (data: any): Address => {
+  if (!data) throw new Error('Cannot map empty address');
+  return {
+    id: String(data.id || ''),
+    label: data.label || 'Home',
+    recipientName: data.recipient_name || data.recipientName,
+    phone: data.phone || '',
+    street: data.street || '',
+    area: data.area || '',
+    city: data.city || '',
+    lat: Number(data.lat || 0),
+    lng: Number(data.lng || 0),
+    deliveryInstructions: data.delivery_instructions || data.deliveryInstructions || '',
+    isDefault: Boolean(data.is_default ?? data.isDefault),
+  };
 };
 
 export const mapServerOrder = (data: any): Order => {
@@ -436,11 +469,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Location
+  // Location & Addresses
   const [selectedCity, setSelectedCity] = useState('Lahore');
   const [selectedArea, setSelectedArea] = useState('Gulberg III');
   const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
   const [currentAddress, setCurrentAddress] = useState<Address | null>(null);
+
+  // Favorites & Notifications
+  const [favorites, setFavorites] = useState<{ restaurants: FavoriteItem[]; products: FavoriteItem[] }>({
+    restaurants: [],
+    products: []
+  });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
 
   // Cart & Pricing
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -510,10 +551,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Synchronize authenticated user resources
       if (localStorage.getItem('fastflow_auth_token')) {
         try {
-          const [cartRes, ordRes, profRes] = await Promise.allSettled([
+          const [cartRes, ordRes, profRes, favRes, notifRes, addrRes] = await Promise.allSettled([
             cartApi.getCart(),
             orderApi.getAll(),
             customerApi.getProfile(),
+            customerApi.getFavorites(),
+            customerApi.getNotifications(),
+            customerApi.getAddresses(),
           ]);
 
           if (cartRes.status === 'fulfilled' && cartRes.value.data) {
@@ -525,11 +569,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setOrders(rawOrders.map(mapServerOrder));
           }
 
-          if (profRes.status === 'fulfilled' && profRes.value.data?.addresses) {
-            setSavedAddresses(profRes.value.data.addresses);
-            if (profRes.value.data.addresses.length > 0 && !currentAddress) {
-              setCurrentAddress(profRes.value.data.addresses[0]);
+          if (addrRes.status === 'fulfilled' && addrRes.value.data) {
+            const rawAddrs = Array.isArray(addrRes.value.data) ? addrRes.value.data : [];
+            const mapped = rawAddrs.map(mapServerAddress);
+            setSavedAddresses(mapped);
+            const def = mapped.find((a) => a.isDefault) || mapped[0] || null;
+            if (def) setCurrentAddress(def);
+          } else if (profRes.status === 'fulfilled' && profRes.value.data?.addresses) {
+            const rawAddrs = Array.isArray(profRes.value.data.addresses) ? profRes.value.data.addresses : [];
+            const mapped = rawAddrs.map(mapServerAddress);
+            setSavedAddresses(mapped);
+            if (mapped.length > 0 && !currentAddress) {
+              setCurrentAddress(mapped[0]);
             }
+          }
+
+          if (favRes.status === 'fulfilled' && favRes.value.data) {
+            setFavorites({
+              restaurants: favRes.value.data.restaurants || [],
+              products: favRes.value.data.products || []
+            });
+          }
+
+          if (notifRes.status === 'fulfilled' && notifRes.value.data) {
+            setNotifications(notifRes.value.data.notifications || []);
+            setUnreadNotificationsCount(notifRes.value.data.unread_count || 0);
           }
         } catch {
           // Handled gracefully
@@ -787,14 +851,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Please select or add a delivery address to proceed.');
     }
 
+    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `chk-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     const payload = {
       restaurant_id: cartRestaurant.id,
+      address_id: currentAddress.id && !currentAddress.id.startsWith('temp') ? currentAddress.id : undefined,
+      idempotency_key: idempotencyKey,
       delivery_address: {
         street: currentAddress.street,
         area: currentAddress.area,
         city: currentAddress.city,
+        lat: currentAddress.lat,
+        lng: currentAddress.lng,
       },
-      delivery_instructions: instructions || currentAddress.deliveryInstructions || '',
+      delivery_instructions: instructions || currentAddress.deliveryInstructions || currentAddress.delivery_instructions || '',
       payment_method: paymentMethod,
       coupon_code: appliedCoupon?.code,
       tip: cartTotals.tip,
@@ -840,34 +912,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Simulate order step for easy walkthrough
-  const simulateOrderStep = async (orderId: string) => {
-    const targetOrder = orders.find((o) => o.id === orderId);
-    if (!targetOrder) return;
-
-    const statusFlow: OrderStatus[] = [
-      'pending',
-      'confirmed',
-      'preparing',
-      'ready_for_pickup',
-      'assigned_to_rider',
-      'picked_up',
-      'on_the_way',
-      'delivered'
-    ];
-
-    const currentIndex = statusFlow.indexOf(targetOrder.orderStatus);
-    if (currentIndex >= 0 && currentIndex < statusFlow.length - 1) {
-      const nextStatus = statusFlow[currentIndex + 1];
-
-      if (nextStatus === 'assigned_to_rider' && !targetOrder.riderId) {
-        await autoDispatchRider(orderId);
-      } else {
-        await updateOrderStatus(orderId, nextStatus, `Automatic progression simulation to ${nextStatus}`);
+  // Refresh live order status from backend
+  const refreshOrderStatus = async (orderId: string) => {
+    try {
+      const res = await orderApi.getById(orderId);
+      if (res.success && res.data) {
+        const authoritativeOrder = mapServerOrder(res.data);
+        setOrders((prev) =>
+          prev.map((o) => (o.id === orderId ? authoritativeOrder : o))
+        );
+        if (activeOrder?.id === orderId) {
+          setActiveOrder(authoritativeOrder);
+        }
+        showToast(`Refreshed order #${authoritativeOrder.orderNumber} status: ${authoritativeOrder.orderStatus.replace(/_/g, ' ')}`, 'info');
       }
-    } else {
-      showToast('Order is already in final completed state.', 'info');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to refresh order status', 'error');
     }
+  };
+
+  const simulateOrderStep = async (orderId: string) => {
+    await refreshOrderStatus(orderId);
   };
 
   const cancelOrder = async (orderId: string, reason: string) => {
@@ -1225,10 +1290,145 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Addresses
-  const addSavedAddress = (addr: Address) => {
-    setSavedAddresses((prev) => [...prev, addr]);
-    setCurrentAddress(addr);
-    showToast('New delivery address saved', 'success');
+  const addSavedAddress = async (addr: Omit<Address, 'id'> | Address) => {
+    try {
+      const res = await customerApi.addAddress(addr as any);
+      if (res.success && res.data) {
+        const saved = mapServerAddress(res.data);
+        setSavedAddresses((prev) => [saved, ...prev.filter((a) => a.id !== saved.id)]);
+        setCurrentAddress(saved);
+        showToast('New delivery address saved', 'success');
+      }
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || err?.message || 'Failed to save address', 'error');
+      throw err;
+    }
+  };
+
+  const deleteSavedAddress = async (addressId: string) => {
+    try {
+      const res = await customerApi.deleteAddress(addressId);
+      if (res.success) {
+        setSavedAddresses((prev) => prev.filter((a) => a.id !== addressId));
+        if (currentAddress?.id === addressId) {
+          setCurrentAddress(savedAddresses.find((a) => a.id !== addressId) || null);
+        }
+        showToast('Address removed', 'info');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to delete address', 'error');
+    }
+  };
+
+  const setDefaultSavedAddress = async (addressId: string) => {
+    try {
+      const res = await customerApi.setDefaultAddress(addressId);
+      if (res.success && res.data) {
+        const updated = mapServerAddress(res.data);
+        setSavedAddresses((prev) =>
+          prev.map((a) => ({ ...a, isDefault: a.id === addressId }))
+        );
+        setCurrentAddress(updated);
+        showToast('Default delivery address updated', 'success');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to set default address', 'error');
+    }
+  };
+
+  // Favorites
+  const toggleFavoriteRestaurant = async (restaurantId: string | number): Promise<boolean> => {
+    if (!currentUser) {
+      openAuthModal('login');
+      return false;
+    }
+    try {
+      const res = await customerApi.toggleRestaurantFavorite(restaurantId);
+      if (res.success && res.data) {
+        const isFav = res.data.is_favorite;
+        if (isFav) {
+          const rest = restaurants.find((r) => r.id === String(restaurantId));
+          if (rest) {
+            setFavorites((prev) => ({
+              ...prev,
+              restaurants: [{ id: `fav-${restaurantId}`, type: 'restaurant', restaurant: rest, created_at: new Date().toISOString() }, ...prev.restaurants]
+            }));
+          }
+          showToast('Added to favorites', 'success');
+        } else {
+          setFavorites((prev) => ({
+            ...prev,
+            restaurants: prev.restaurants.filter((f) => String(f.restaurant?.id) !== String(restaurantId))
+          }));
+          showToast('Removed from favorites', 'info');
+        }
+        return isFav;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update favorite', 'error');
+      return false;
+    }
+  };
+
+  const toggleFavoriteProduct = async (productId: string | number): Promise<boolean> => {
+    if (!currentUser) {
+      openAuthModal('login');
+      return false;
+    }
+    try {
+      const res = await customerApi.toggleProductFavorite(productId);
+      if (res.success && res.data) {
+        const isFav = res.data.is_favorite;
+        if (isFav) {
+          const prod = products.find((p) => p.id === String(productId));
+          if (prod) {
+            setFavorites((prev) => ({
+              ...prev,
+              products: [{ id: `fav-${productId}`, type: 'product', product: prod, created_at: new Date().toISOString() }, ...prev.products]
+            }));
+          }
+          showToast('Saved to favorite dishes', 'success');
+        } else {
+          setFavorites((prev) => ({
+            ...prev,
+            products: prev.products.filter((f) => String(f.product?.id) !== String(productId))
+          }));
+          showToast('Removed from favorites', 'info');
+        }
+        return isFav;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update favorite', 'error');
+      return false;
+    }
+  };
+
+  // Notifications
+  const markNotificationAsRead = async (id: string) => {
+    try {
+      await customerApi.markNotificationRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
+      );
+      setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
+    } catch {
+      // Ignored
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    try {
+      await customerApi.markAllNotificationsRead();
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, read_at: new Date().toISOString() }))
+      );
+      setUnreadNotificationsCount(0);
+      showToast('All notifications marked as read', 'info');
+    } catch {
+      // Ignored
+    }
   };
 
   // Settings
@@ -1310,6 +1510,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentAddress,
         setCurrentAddress,
         addSavedAddress,
+        deleteSavedAddress,
+        setDefaultSavedAddress,
+
+        favorites,
+        toggleFavoriteRestaurant,
+        toggleFavoriteProduct,
+
+        notifications,
+        unreadNotificationsCount,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
 
         cart,
         cartRestaurant,
@@ -1334,6 +1545,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveOrder,
         updateOrderStatus,
         cancelOrder,
+        refreshOrderStatus,
         simulateOrderStep,
         assignRiderToOrder,
         unassignRiderFromOrder,

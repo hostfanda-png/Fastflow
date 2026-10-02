@@ -17,6 +17,9 @@ use App\Models\Cart;
 use App\Models\Commission;
 use App\Models\FinancialTransaction;
 use App\Models\Payment;
+use App\Models\CustomerAddress;
+use App\Services\DeliveryService;
+use App\Services\NotificationService;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -87,8 +90,10 @@ class OrderService
                 }
 
                 $quantity = max(1, (int)$itemInput['quantity']);
-                $unitPrice = $product->discount_price ?? $product->price;
+                $baseProductPrice = (float)($product->discount_price ?? $product->price);
+                $unitPrice = $baseProductPrice;
                 $variantName = null;
+                $variantModifier = 0.00;
 
                 // Strict Variant Verification
                 if (!empty($itemInput['variant_id'])) {
@@ -100,7 +105,8 @@ class OrderService
                         throw new Exception("Selected variant #{$itemInput['variant_id']} does not belong to dish '{$product->name}'.");
                     }
 
-                    $unitPrice += $variant->price_modifier;
+                    $variantModifier = (float)$variant->price_modifier;
+                    $unitPrice += $variantModifier;
                     $variantName = $variant->name;
                 }
 
@@ -137,6 +143,8 @@ class OrderService
                     'product_id' => $product->id,
                     'product_name' => $product->name,
                     'quantity' => $quantity,
+                    'product_price' => $baseProductPrice,
+                    'variant_price' => $variantModifier,
                     'unit_price' => $unitPrice + $addonTotal,
                     'total_price' => $itemLineTotal,
                     'variant_name' => $variantName,
@@ -145,8 +153,46 @@ class OrderService
                 ];
             }
 
-            if ($subtotal < (float)$restaurant->minimum_order) {
-                throw new Exception("Order subtotal of {$subtotal} is below restaurant minimum order threshold of {$restaurant->minimum_order}.");
+            // Delivery address verification & zone availability check
+            $addressObj = null;
+            $deliveryAddressData = [];
+            if (!empty($data['address_id'])) {
+                $addressObj = CustomerAddress::where('user_id', $customer->id)->find($data['address_id']);
+                if (!$addressObj) {
+                    throw new Exception("Selected delivery address does not exist or does not belong to your account.");
+                }
+                $deliveryAddressData = [
+                    'id' => $addressObj->id,
+                    'label' => $addressObj->label,
+                    'recipient_name' => $addressObj->recipient_name,
+                    'phone' => $addressObj->phone,
+                    'street' => $addressObj->street,
+                    'area' => $addressObj->area,
+                    'city' => $addressObj->city,
+                    'lat' => $addressObj->lat,
+                    'lng' => $addressObj->lng,
+                    'delivery_instructions' => $addressObj->delivery_instructions,
+                ];
+            } elseif (!empty($data['delivery_address'])) {
+                $deliveryAddressData = is_array($data['delivery_address'])
+                    ? $data['delivery_address']
+                    : json_decode($data['delivery_address'], true);
+                if (is_array($deliveryAddressData)) {
+                    $addressObj = new CustomerAddress($deliveryAddressData);
+                }
+            }
+
+            // Authoritative Delivery & Availability Check
+            $deliveryEligibility = DeliveryService::checkDeliveryEligibility($restaurant, $addressObj, $subtotal);
+            if (!$deliveryEligibility['can_deliver']) {
+                throw new Exception($deliveryEligibility['reason'] ?? "Restaurant cannot deliver to the selected address.");
+            }
+
+            $deliveryFee = (float)$deliveryEligibility['delivery_fee'];
+            $minOrder = (float)$deliveryEligibility['minimum_order'];
+
+            if ($subtotal < $minOrder) {
+                throw new Exception("Order subtotal of {$subtotal} is below restaurant minimum order threshold of {$minOrder}.");
             }
 
             // Server-side Coupon Validation
@@ -190,7 +236,6 @@ class OrderService
             }
 
             // Server-side Fees & Tax calculations
-            $deliveryFee = (float)$restaurant->delivery_fee;
             $taxPercentage = (float)env('DEFAULT_TAX_PERCENTAGE', 5.0);
             $tax = round(($subtotal * $taxPercentage) / 100, 2);
             $serviceFee = (float)env('DEFAULT_SERVICE_FEE', 30.0);
@@ -216,7 +261,7 @@ class OrderService
                 'rider_id' => null,
                 'customer_name' => $customer->name,
                 'customer_phone' => $customer->phone ?? 'Unspecified',
-                'delivery_address_json' => json_encode($data['delivery_address'] ?? []),
+                'delivery_address_json' => json_encode($deliveryAddressData),
                 'delivery_instructions' => $data['delivery_instructions'] ?? null,
                 'order_status' => 'pending',
                 'subtotal' => $subtotal,
@@ -229,16 +274,18 @@ class OrderService
                 'grand_total' => $grandTotal,
                 'payment_method' => $paymentMethod,
                 'payment_status' => $paymentStatus,
-                'estimated_delivery_time' => $restaurant->estimated_delivery_time ?? '25-35 min',
+                'estimated_delivery_time' => $deliveryEligibility['estimated_delivery_time'] ?? ($restaurant->estimated_delivery_time ?? '25-35 min'),
             ]);
 
-            // Save items and item addons
+            // Save items and item addons with historical snapshots
             foreach ($preparedItems as $prepItem) {
                 $orderItem = OrderItem::create([
                     'order_id' => $order->id,
                     'product_id' => $prepItem['product_id'],
                     'product_name' => $prepItem['product_name'],
                     'quantity' => $prepItem['quantity'],
+                    'product_price' => $prepItem['product_price'],
+                    'variant_price' => $prepItem['variant_price'],
                     'unit_price' => $prepItem['unit_price'],
                     'total_price' => $prepItem['total_price'],
                     'variant_name' => $prepItem['variant_name'],
@@ -319,6 +366,9 @@ class OrderService
                 $coupon->increment('used_count');
             }
 
+            // Dispatch customer notification
+            NotificationService::notifyOrderStatus($order, 'pending');
+
             return $order->load(['items.addons', 'restaurant']);
         });
     }
@@ -359,7 +409,8 @@ class OrderService
             'created_at' => now(),
         ]);
 
+        NotificationService::notifyOrderStatus($order, $newStatus, $note);
+
         return $order;
     }
 }
-

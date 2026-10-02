@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
+use App\Models\CustomerAddress;
+use App\Models\Review;
+use App\Services\DeliveryService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -72,6 +75,10 @@ class RestaurantController extends Controller
             $query->orderBy('estimated_delivery_time', 'asc');
         } elseif ($sortBy === 'delivery_fee') {
             $query->orderBy('delivery_fee', 'asc');
+        } elseif ($sortBy === 'min_order' || $sortBy === 'minimum_order') {
+            $query->orderBy('minimum_order', 'asc');
+        } elseif ($sortBy === 'newest') {
+            $query->orderByDesc('created_at');
         } else {
             $query->orderByDesc('rating')->orderByDesc('is_featured');
         }
@@ -110,10 +117,13 @@ class RestaurantController extends Controller
         $restaurant = Restaurant::with([
             'cuisines',
             'products' => function ($q) {
-                $q->where('is_available', true)->with(['variants', 'addons']);
+                $q->where('is_available', true)->with(['variants', 'addons', 'category']);
             },
             'hours',
-            'reviews.customer'
+            'reviews.customer',
+            'deliveryZones' => function ($q) {
+                $q->where('is_active', true);
+            }
         ])
         ->where(function ($q) use ($identifier) {
             $q->where('id', $identifier)->orWhere('slug', $identifier);
@@ -121,5 +131,47 @@ class RestaurantController extends Controller
         ->firstOrFail();
 
         return $this->sendResponse($restaurant, 'Restaurant details retrieved');
+    }
+
+    public function checkDelivery(Request $request, string $identifier): JsonResponse
+    {
+        $restaurant = Restaurant::where('id', $identifier)
+            ->orWhere('slug', $identifier)
+            ->firstOrFail();
+
+        $address = null;
+        if ($addressId = $request->query('address_id')) {
+            $user = $request->user('sanctum');
+            if ($user) {
+                $address = CustomerAddress::where('user_id', $user->id)->find($addressId);
+            }
+        } elseif ($request->filled('lat') && $request->filled('lng')) {
+            $address = new CustomerAddress([
+                'lat' => (float)$request->query('lat'),
+                'lng' => (float)$request->query('lng'),
+                'area' => $request->query('area'),
+                'city' => $request->query('city'),
+            ]);
+        }
+
+        $subtotal = $request->filled('subtotal') ? (float)$request->query('subtotal') : null;
+        $result = DeliveryService::checkDeliveryEligibility($restaurant, $address, $subtotal);
+
+        return $this->sendResponse($result, 'Delivery eligibility calculated');
+    }
+
+    public function getReviews(string $identifier): JsonResponse
+    {
+        $restaurant = Restaurant::where('id', $identifier)
+            ->orWhere('slug', $identifier)
+            ->firstOrFail();
+
+        $reviews = Review::where('restaurant_id', $restaurant->id)
+            ->where('is_approved', true)
+            ->with('customer:id,name,avatar')
+            ->orderByDesc('created_at')
+            ->get();
+
+        return $this->sendResponse($reviews, 'Restaurant reviews retrieved');
     }
 }

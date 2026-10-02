@@ -11,6 +11,8 @@ class OrderItem extends Model
         'product_id',
         'product_name',
         'quantity',
+        'product_price',
+        'variant_price',
         'unit_price',
         'total_price',
         'variant_name',
@@ -18,6 +20,8 @@ class OrderItem extends Model
     ];
 
     protected $casts = [
+        'product_price' => 'float',
+        'variant_price' => 'float',
         'unit_price' => 'float',
         'total_price' => 'float',
         'quantity' => 'integer',

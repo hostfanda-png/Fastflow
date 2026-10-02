@@ -241,14 +241,44 @@ export interface CartItem {
 
 export interface Address {
   id: string;
-  label: 'Home' | 'Work' | 'Other';
+  label: 'Home' | 'Work' | 'Other' | string;
+  recipientName?: string;
+  recipient_name?: string;
+  phone?: string;
   street: string;
   area: string;
   city: string;
-  lat: number;
-  lng: number;
+  lat?: number;
+  lng?: number;
   deliveryInstructions?: string;
+  delivery_instructions?: string;
   isDefault?: boolean;
+  is_default?: boolean;
+}
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  data: {
+    order_id?: number | string;
+    order_number?: string;
+    restaurant_id?: number | string;
+    status?: string;
+    payment_status?: string;
+    title: string;
+    message: string;
+    note?: string;
+  };
+  read_at?: string | null;
+  created_at: string;
+}
+
+export interface FavoriteItem {
+  id: number | string;
+  type: 'restaurant' | 'product';
+  restaurant?: Restaurant;
+  product?: Product;
+  created_at: string;
 }
 
 export interface OrderItem {

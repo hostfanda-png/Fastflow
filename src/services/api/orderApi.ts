@@ -3,16 +3,20 @@ import { Order } from '../../types';
 
 export interface CheckoutPayload {
   restaurant_id: string | number;
-  delivery_address: {
+  address_id?: string | number;
+  idempotency_key?: string;
+  delivery_address?: {
     street: string;
     area: string;
     city: string;
+    lat?: number;
+    lng?: number;
   };
   delivery_instructions?: string;
   payment_method: 'cod' | 'stripe' | 'wallet';
   coupon_code?: string;
   tip?: number;
-  items: Array<{
+  items?: Array<{
     product_id: string | number;
     quantity: number;
     variant_id?: string | number;

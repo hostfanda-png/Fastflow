@@ -48,30 +48,35 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Address creation form toggle
   const [showNewAddressForm, setShowNewAddressForm] = useState(false);
   const [newLabel, setNewLabel] = useState<'Home' | 'Work' | 'Other'>('Home');
+  const [newRecipientName, setNewRecipientName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [newStreet, setNewStreet] = useState('');
   const [newArea, setNewArea] = useState('Gulberg III');
   const [newCity, setNewCity] = useState('Lahore');
 
   if (!isOpen) return null;
 
-  const handleSaveNewAddress = (e: React.FormEvent) => {
+  const handleSaveNewAddress = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStreet.trim()) return;
 
-    const newAddr: Address = {
-      id: `addr-${Date.now()}`,
-      label: newLabel,
-      street: newStreet.trim(),
-      area: newArea,
-      city: newCity,
-      lat: 31.5204 + (Math.random() - 0.5) * 0.02,
-      lng: 74.3587 + (Math.random() - 0.5) * 0.02,
-      deliveryInstructions: deliveryInstructions
-    };
-
-    addSavedAddress(newAddr);
-    setShowNewAddressForm(false);
-    setNewStreet('');
+    try {
+      await addSavedAddress({
+        label: newLabel,
+        recipient_name: newRecipientName.trim() || currentUser?.name || undefined,
+        phone: newPhone.trim() || currentUser?.phone || undefined,
+        street: newStreet.trim(),
+        area: newArea.trim(),
+        city: newCity.trim(),
+        delivery_instructions: deliveryInstructions.trim() || undefined,
+      });
+      setShowNewAddressForm(false);
+      setNewStreet('');
+      setNewRecipientName('');
+      setNewPhone('');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to save address', 'error');
+    }
   };
 
   const handleConfirmOrder = async () => {
