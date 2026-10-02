@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Refund;
+use App\Models\Restaurant;
 use App\Services\PaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -31,9 +32,15 @@ class PaymentController extends Controller
         ]);
 
         $order = Order::findOrFail($validated['order_id']);
+        $user = $request->user();
+
+        // Customer isolation / IDOR check
+        if ($order->customer_id !== $user->id && !$user->hasRole('super_admin')) {
+            return $this->sendError('Unauthorized access to this order.', [], 403);
+        }
 
         try {
-            $intentData = $this->paymentService->createPaymentIntent($order, $request->user());
+            $intentData = $this->paymentService->createPaymentIntent($order, $user);
             return $this->sendResponse($intentData, 'Payment intent created successfully');
         } catch (Exception $e) {
             return $this->sendError($e->getMessage(), [], 422);
@@ -57,17 +64,19 @@ class PaymentController extends Controller
     }
 
     /**
-     * Mark Cash on Delivery payment collected by authorized staff/admin.
+     * Mark Cash on Delivery payment collected by authorized staff/courier/admin.
      */
     public function collectCod(Request $request, int $orderId): JsonResponse
     {
         $user = $request->user();
         $order = Order::findOrFail($orderId);
 
-        // Authorization: super_admin or restaurant_owner (if owns restaurant) or assigned courier
+        // Multi-tenant IDOR check: super_admin or restaurant owner who owns the restaurant or assigned rider
+        $isOwner = Restaurant::where('id', $order->restaurant_id)->where('owner_id', $user->id)->exists();
+        $isAssignedRider = $user->hasRole('delivery_rider') && ($order->rider_id == $user->rider?->id);
         $isAuthorized = $user->hasRole('super_admin') 
-            || ($user->hasRole('restaurant_owner') && $order->restaurant_id == $user->restaurant_id)
-            || ($user->hasRole('delivery_rider') && $order->rider_id == $user->rider?->id);
+            || ($user->hasRole('restaurant_owner') && $isOwner)
+            || $isAssignedRider;
 
         if (!$isAuthorized) {
             return $this->sendError('Unauthorized to record cash payment collection for this order.', [], 403);
@@ -93,8 +102,10 @@ class PaymentController extends Controller
         $user = $request->user();
         $order = Order::findOrFail($orderId);
 
+        // Multi-tenant IDOR check: super_admin or restaurant owner who owns the restaurant
+        $isOwner = Restaurant::where('id', $order->restaurant_id)->where('owner_id', $user->id)->exists();
         $isAuthorized = $user->hasRole('super_admin') 
-            || ($user->hasRole('restaurant_owner') && $order->restaurant_id == $user->restaurant_id);
+            || ($user->hasRole('restaurant_owner') && $isOwner);
 
         if (!$isAuthorized) {
             return $this->sendError('Unauthorized to issue refunds for this order.', [], 403);

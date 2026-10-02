@@ -9,6 +9,23 @@ class Settlement extends Model
 {
     use HasFactory;
 
+    // Phase 4 Authoritative Settlement Vocabulary
+    public const STATUS_PENDING = 'pending';
+    public const STATUS_APPROVED = 'approved';
+    public const STATUS_PROCESSING = 'processing';
+    public const STATUS_PAID = 'paid';
+    public const STATUS_FAILED = 'failed';
+    public const STATUS_CANCELLED = 'cancelled';
+
+    public const VALID_STATUSES = [
+        self::STATUS_PENDING,
+        self::STATUS_APPROVED,
+        self::STATUS_PROCESSING,
+        self::STATUS_PAID,
+        self::STATUS_FAILED,
+        self::STATUS_CANCELLED,
+    ];
+
     protected $fillable = [
         'settlement_number',
         'restaurant_id',

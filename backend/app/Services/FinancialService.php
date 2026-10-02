@@ -52,16 +52,16 @@ class FinancialService
         $totalRestaurantPayouts = (float)(clone $ftQuery)->where('direction', 'credit')->sum('restaurant_payout');
         $totalDeliveryFees = (float)(clone $ftQuery)->where('direction', 'credit')->sum('delivery_fee');
         $totalRiderPayouts = (float)(clone $ftQuery)->where('direction', 'credit')->sum('rider_payout');
-        $totalRefundedAmount = (float)(clone $refundQuery)->where('status', 'completed')->sum('amount');
+        $totalRefundedAmount = (float)(clone $refundQuery)->where('status', Refund::STATUS_COMPLETED)->sum('amount');
         
         $totalPaidOrders = (int)(clone $orderQuery)->where('payment_status', 'paid')->count();
         $totalPendingCodOrders = (int)(clone $orderQuery)->where('payment_method', 'cod')->where('payment_status', 'pending')->count();
         $totalRefundedOrders = (int)(clone $orderQuery)->where('payment_status', 'refunded')->count();
 
-        $totalSettledAmount = (float)(clone $settlementQuery)->where('status', 'paid')->sum('net_payout');
-        $totalPendingSettlementAmount = (float)(clone $settlementQuery)->whereIn('status', ['pending', 'approved', 'processing'])->sum('net_payout');
+        $totalSettledAmount = (float)(clone $settlementQuery)->where('status', Settlement::STATUS_PAID)->sum('net_payout');
+        $totalPendingSettlementAmount = (float)(clone $settlementQuery)->whereIn('status', [Settlement::STATUS_PENDING, Settlement::STATUS_APPROVED, Settlement::STATUS_PROCESSING])->sum('net_payout');
 
-        // Paginated ledger transactions
+        // Paginated directional ledger transactions
         $transactions = (clone $ftQuery)
             ->with(['restaurant:id,name,city', 'order:id,order_number,payment_method,payment_status'])
             ->orderByDesc('created_at')
@@ -115,7 +115,7 @@ class FinancialService
         $netEarnings = (float)(clone $commQuery)->sum('restaurant_net_payout');
         
         $pendingSettlement = (float)(clone $commQuery)->where('settlement_status', 'pending')->sum('restaurant_net_payout');
-        $settledPayout = (float)(clone $settlementQuery)->where('status', 'paid')->sum('net_payout');
+        $settledPayout = (float)(clone $settlementQuery)->where('status', Settlement::STATUS_PAID)->sum('net_payout');
 
         $recentSettlements = (clone $settlementQuery)->orderByDesc('created_at')->take(10)->get();
         $recentTransactions = (clone $ftQuery)->with('order:id,order_number,order_status,payment_method,payment_status')->orderByDesc('created_at')->take(15)->get();
@@ -140,7 +140,7 @@ class FinancialService
     }
 
     /**
-     * Create a settlement batch for a restaurant
+     * Create a settlement batch for a restaurant with strict concurrency locking
      */
     public function createSettlementBatch(int $restaurantId, string $periodStart, string $periodEnd, User $admin, ?string $notes = null): Settlement
     {
@@ -174,13 +174,13 @@ class FinancialService
                 'tax_collected' => 0.00,
                 'total_deductions' => $platformCommission,
                 'net_payout' => $netPayout,
-                'status' => 'approved',
+                'status' => Settlement::STATUS_APPROVED,
                 'payout_method' => 'bank_transfer',
                 'processed_by' => $admin->id,
                 'notes' => $notes,
             ]);
 
-            // Mark commission rows as settled
+            // Mark commission rows as settled atomically
             Commission::whereIn('id', $pendingCommissions->pluck('id'))->update([
                 'settlement_status' => 'settled',
             ]);
@@ -192,22 +192,47 @@ class FinancialService
     }
 
     /**
-     * Mark a settlement batch as paid with bank reference
+     * Mark a settlement batch as paid with bank reference and record ledger debit
      */
     public function markSettlementPaid(int $settlementId, string $paymentReference, User $admin): Settlement
     {
         return DB::transaction(function () use ($settlementId, $paymentReference, $admin) {
             $settlement = Settlement::where('id', $settlementId)->lockForUpdate()->firstOrFail();
 
-            if ($settlement->status === 'paid') {
+            if ($settlement->status === Settlement::STATUS_PAID) {
                 throw new Exception("Settlement #{$settlement->settlement_number} has already been marked as paid.");
             }
 
-            $settlement->status = 'paid';
+            if (in_array($settlement->status, [Settlement::STATUS_CANCELLED, Settlement::STATUS_FAILED])) {
+                throw new Exception("Cannot pay settlement #{$settlement->settlement_number} in '{$settlement->status}' status.");
+            }
+
+            $settlement->status = Settlement::STATUS_PAID;
             $settlement->payment_reference = $paymentReference;
             $settlement->paid_at = now();
             $settlement->processed_by = $admin->id;
             $settlement->save();
+
+            // Record Directional Debit Transaction for Merchant Payout
+            FinancialTransaction::create([
+                'order_id' => null,
+                'restaurant_id' => $settlement->restaurant_id,
+                'transaction_type' => 'restaurant_payout',
+                'order_number' => $settlement->settlement_number,
+                'gross_amount' => $settlement->net_payout,
+                'direction' => 'debit',
+                'platform_commission' => 0.00,
+                'restaurant_payout' => $settlement->net_payout,
+                'delivery_fee' => 0.00,
+                'rider_payout' => 0.00,
+                'gateway_fee' => 0.00,
+                'reference' => $paymentReference,
+                'metadata' => [
+                    'settlement_id' => $settlement->id,
+                    'settlement_number' => $settlement->settlement_number,
+                ],
+                'status' => 'settled',
+            ]);
 
             AuditService::log('financial.settlement_paid', 'Settlements', (string)$settlement->id, "Marked settlement {$settlement->settlement_number} as paid with ref: {$paymentReference}", $admin);
 

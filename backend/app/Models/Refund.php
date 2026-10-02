@@ -9,6 +9,21 @@ class Refund extends Model
 {
     use HasFactory;
 
+    // Phase 4 Authoritative Refund State Vocabulary
+    public const STATUS_PENDING = 'pending';
+    public const STATUS_PROCESSING = 'processing';
+    public const STATUS_COMPLETED = 'completed';
+    public const STATUS_FAILED = 'failed';
+    public const STATUS_CANCELLED = 'cancelled';
+
+    public const VALID_STATUSES = [
+        self::STATUS_PENDING,
+        self::STATUS_PROCESSING,
+        self::STATUS_COMPLETED,
+        self::STATUS_FAILED,
+        self::STATUS_CANCELLED,
+    ];
+
     protected $fillable = [
         'refund_number',
         'order_id',

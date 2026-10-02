@@ -68,7 +68,7 @@ class PaymentService
             $payment->gateway_payment_intent_id = $intentResult['intent_id'] ?? null;
             $payment->amount = (float)$order->grand_total;
             $payment->currency = $intentResult['currency'] ?? 'PKR';
-            $payment->status = 'pending';
+            $payment->status = Payment::STATUS_PENDING;
             $payment->payload = [
                 'client_secret' => $intentResult['client_secret'] ?? null,
                 'created_at' => now()->toIso8601String(),
@@ -91,6 +91,7 @@ class PaymentService
 
     /**
      * Handle incoming verified webhook payload with strict event idempotency
+     * and mandatory amount + currency + transaction ID verification.
      */
     public function handleStripeWebhook(string $rawPayload, ?string $signature): array
     {
@@ -107,7 +108,7 @@ class PaymentService
         $eventId = $parsed['event_id'];
         $eventType = $parsed['event_type'];
 
-        // 1. Idempotency Check on Webhook Event
+        // 1. Idempotency Check on Webhook Event (Persisted Webhook-Event Table)
         $existingEvent = PaymentWebhookEvent::where('gateway', 'stripe')->where('event_id', $eventId)->first();
         if ($existingEvent && $existingEvent->status === 'processed') {
             return [
@@ -131,8 +132,10 @@ class PaymentService
             $orderId = $parsed['order_id'];
             $orderNumber = $parsed['order_number'];
             $transactionId = $parsed['transaction_id'];
+            $stripeAmount = $parsed['amount'];
+            $stripeCurrency = $parsed['currency'];
 
-            return DB::transaction(function () use ($orderId, $orderNumber, $transactionId, $webhookRecord, $eventType) {
+            return DB::transaction(function () use ($orderId, $orderNumber, $transactionId, $stripeAmount, $stripeCurrency, $webhookRecord, $eventType) {
                 $query = Order::query()->lockForUpdate();
 
                 if ($orderId) {
@@ -153,11 +156,66 @@ class PaymentService
                     $webhookRecord->error_message = 'Associated order not found';
                     $webhookRecord->save();
 
-                    return ['status' => 'order_not_found', 'http_code' => 200];
+                    AuditService::log('payment.security_violation', 'Payments', '0', "Webhook event {$webhookRecord->event_id} failed: Associated order not found");
+                    return ['status' => 'order_not_found', 'http_code' => 400];
+                }
+
+                $payment = Payment::where('order_id', $order->id)->lockForUpdate()->first();
+                if (!$payment) {
+                    $webhookRecord->status = 'failed';
+                    $webhookRecord->error_message = 'Associated payment record not found';
+                    $webhookRecord->save();
+
+                    AuditService::log('payment.security_violation', 'Payments', (string)$order->id, "Webhook event {$webhookRecord->event_id} failed: Payment record missing for order {$order->order_number}");
+                    return ['status' => 'payment_missing', 'http_code' => 400];
+                }
+
+                // Mandatory Verification 1: PaymentIntent / Transaction ID Verification
+                if ($payment->gateway_payment_intent_id && $transactionId && $payment->gateway_payment_intent_id !== $transactionId) {
+                    $webhookRecord->status = 'failed';
+                    $webhookRecord->error_message = "PaymentIntent ID mismatch: expected {$payment->gateway_payment_intent_id}, got {$transactionId}";
+                    $webhookRecord->save();
+
+                    AuditService::log('payment.security_violation', 'Payments', (string)$order->id, "Webhook PaymentIntent ID mismatch on order {$order->order_number}");
+                    return ['status' => 'intent_mismatch', 'http_code' => 400];
+                }
+
+                // Mandatory Verification 2: Amount Verification (Cents Precision)
+                $expectedAmountCents = (int)round((float)$order->grand_total * 100);
+                $receivedAmountCents = (int)round((float)$stripeAmount * 100);
+
+                if ($receivedAmountCents !== $expectedAmountCents) {
+                    $webhookRecord->status = 'failed';
+                    $webhookRecord->error_message = "Amount mismatch: expected {$order->grand_total}, got {$stripeAmount}";
+                    $webhookRecord->save();
+
+                    AuditService::log('payment.security_violation', 'Payments', (string)$order->id, "Webhook amount mismatch on order {$order->order_number}: expected {$order->grand_total}, received {$stripeAmount}");
+                    return ['status' => 'amount_mismatch', 'http_code' => 400];
+                }
+
+                // Mandatory Verification 3: Currency Verification
+                $expectedCurrency = strtoupper($payment->currency ?: env('DEFAULT_CURRENCY_CODE', 'PKR'));
+                if (strtoupper($stripeCurrency) !== $expectedCurrency) {
+                    $webhookRecord->status = 'failed';
+                    $webhookRecord->error_message = "Currency mismatch: expected {$expectedCurrency}, got {$stripeCurrency}";
+                    $webhookRecord->save();
+
+                    AuditService::log('payment.security_violation', 'Payments', (string)$order->id, "Webhook currency mismatch on order {$order->order_number}: expected {$expectedCurrency}, received {$stripeCurrency}");
+                    return ['status' => 'currency_mismatch', 'http_code' => 400];
+                }
+
+                // Mandatory Verification 4: Customer Ownership
+                if ($payment->customer_id && $order->customer_id && (int)$payment->customer_id !== (int)$order->customer_id) {
+                    $webhookRecord->status = 'failed';
+                    $webhookRecord->error_message = "Customer ownership mismatch on order";
+                    $webhookRecord->save();
+
+                    AuditService::log('payment.security_violation', 'Payments', (string)$order->id, "Customer ownership mismatch on order {$order->order_number}");
+                    return ['status' => 'customer_mismatch', 'http_code' => 400];
                 }
 
                 // If order is already paid, record event as processed idempotently
-                if ($order->payment_status === 'paid') {
+                if ($order->payment_status === 'paid' && $payment->status === Payment::STATUS_COMPLETED) {
                     $webhookRecord->status = 'processed';
                     $webhookRecord->processed_at = now();
                     $webhookRecord->save();
@@ -171,13 +229,10 @@ class PaymentService
                 $order->save();
 
                 // Update Payment entity
-                $payment = Payment::where('order_id', $order->id)->lockForUpdate()->first();
-                if ($payment) {
-                    $payment->status = 'completed';
-                    $payment->paid_at = now();
-                    $payment->transaction_id = $transactionId ?: $payment->transaction_id;
-                    $payment->save();
-                }
+                $payment->status = Payment::STATUS_COMPLETED;
+                $payment->paid_at = now();
+                $payment->transaction_id = $transactionId ?: $payment->transaction_id;
+                $payment->save();
 
                 // Update Financial Ledger
                 FinancialTransaction::where('order_id', $order->id)->update([
@@ -207,6 +262,17 @@ class PaymentService
             });
         }
 
+        // Handle failure events
+        if (in_array($eventType, ['payment_intent.payment_failed', 'charge.failed'])) {
+            $orderId = $parsed['order_id'];
+            if ($orderId) {
+                Payment::where('order_id', $orderId)->update([
+                    'status' => Payment::STATUS_FAILED,
+                    'failure_message' => $parsed['data']['last_payment_error']['message'] ?? 'Payment failed on gateway',
+                ]);
+            }
+        }
+
         $webhookRecord->status = 'processed';
         $webhookRecord->processed_at = now();
         $webhookRecord->save();
@@ -230,16 +296,20 @@ class PaymentService
                 throw new Exception("Cannot collect payment for an order in '{$lockedOrder->order_status}' status.");
             }
 
+            $payment = Payment::firstOrNew(['order_id' => $lockedOrder->id]);
+            if ($payment->exists && $payment->status === Payment::STATUS_COMPLETED) {
+                throw new Exception("Payment record for Order #{$lockedOrder->order_number} is already completed.");
+            }
+
             $lockedOrder->payment_status = 'paid';
             $lockedOrder->payment_reference = $reference ?: ('COD-COLLECTED-' . strtoupper(bin2hex(random_bytes(4))));
             $lockedOrder->save();
 
-            $payment = Payment::firstOrNew(['order_id' => $lockedOrder->id]);
             $payment->customer_id = $lockedOrder->customer_id;
             $payment->gateway = 'cod';
             $payment->payment_method = 'cod';
             $payment->amount = (float)$lockedOrder->grand_total;
-            $payment->status = 'completed';
+            $payment->status = Payment::STATUS_COMPLETED;
             $payment->paid_at = now();
             $payment->transaction_id = $lockedOrder->payment_reference;
             $payment->save();
@@ -274,14 +344,15 @@ class PaymentService
         return DB::transaction(function () use ($order, $amount, $reason, $actor) {
             $lockedOrder = Order::where('id', $order->id)->lockForUpdate()->firstOrFail();
 
-            if ($lockedOrder->payment_status !== 'paid' && $lockedOrder->payment_status !== 'refunded') {
+            if ($lockedOrder->payment_status !== 'paid' && $lockedOrder->payment_status !== 'partially_refunded') {
                 throw new Exception("Order must be paid before a refund can be issued.");
             }
 
             $payment = Payment::where('order_id', $lockedOrder->id)->lockForUpdate()->first();
             $paidAmount = (float)($payment ? $payment->amount : $lockedOrder->grand_total);
+            
             $alreadyRefunded = (float)Refund::where('order_id', $lockedOrder->id)
-                ->whereIn('status', ['approved', 'processed', 'completed'])
+                ->whereIn('status', [Refund::STATUS_COMPLETED, Refund::STATUS_PROCESSING])
                 ->sum('amount');
 
             $maxRefundable = max(0.00, round($paidAmount - $alreadyRefunded, 2));
@@ -303,7 +374,7 @@ class PaymentService
                 'customer_id' => $lockedOrder->customer_id,
                 'amount' => $amount,
                 'reason' => $reason,
-                'status' => $gatewayResult['success'] ? 'completed' : 'failed',
+                'status' => $gatewayResult['success'] ? Refund::STATUS_COMPLETED : Refund::STATUS_FAILED,
                 'gateway_refund_id' => $gatewayResult['refund_id'] ?? null,
                 'refund_actor' => $actor->role ?? 'super_admin',
                 'processed_by' => $actor->id,
@@ -319,23 +390,28 @@ class PaymentService
             }
 
             // Update payment record
+            $totalNowRefunded = round($alreadyRefunded + $amount, 2);
             if ($payment) {
-                $payment->refunded_amount = round((float)$payment->refunded_amount + $amount, 2);
-                if ($payment->refunded_amount >= $payment->amount) {
-                    $payment->status = 'refunded';
+                $payment->refunded_amount = $totalNowRefunded;
+                if ($totalNowRefunded >= $paidAmount) {
+                    $payment->status = Payment::STATUS_REFUNDED;
+                } else {
+                    $payment->status = Payment::STATUS_PARTIALLY_REFUNDED;
                 }
                 $payment->save();
             }
 
-            // Update order status if fully refunded
-            $totalNowRefunded = round($alreadyRefunded + $amount, 2);
+            // Update order status: full refund marks order refunded; partial refund marks payment_status partially_refunded
             if ($totalNowRefunded >= $paidAmount) {
                 $lockedOrder->payment_status = 'refunded';
                 $lockedOrder->order_status = 'refunded';
                 $lockedOrder->save();
+            } else {
+                $lockedOrder->payment_status = 'partially_refunded';
+                $lockedOrder->save();
             }
 
-            // Record Debit Ledger Entry
+            // Record Directional Debit Ledger Entry
             FinancialTransaction::create([
                 'order_id' => $lockedOrder->id,
                 'restaurant_id' => $lockedOrder->restaurant_id,

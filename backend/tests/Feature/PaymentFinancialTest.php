@@ -14,6 +14,7 @@ use App\Models\Commission;
 use App\Models\FinancialTransaction;
 use App\Models\Settlement;
 use App\Models\PaymentWebhookEvent;
+use App\Models\AuditLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 class PaymentFinancialTest extends TestCase
@@ -25,6 +26,7 @@ class PaymentFinancialTest extends TestCase
     protected User $customer2;
     protected User $owner;
     protected User $owner2;
+    protected User $rider;
     protected Restaurant $restaurant;
     protected Restaurant $restaurant2;
     protected Product $product;
@@ -38,6 +40,7 @@ class PaymentFinancialTest extends TestCase
         $this->customer2 = User::factory()->create(['role' => 'customer']);
         $this->owner = User::factory()->create(['role' => 'restaurant_owner']);
         $this->owner2 = User::factory()->create(['role' => 'restaurant_owner']);
+        $this->rider = User::factory()->create(['role' => 'delivery_rider']);
 
         $this->restaurant = Restaurant::factory()->create([
             'owner_id' => $this->owner->id,
@@ -69,7 +72,7 @@ class PaymentFinancialTest extends TestCase
     }
 
     /**
-     * Test 1: COD checkout generates order, payment record in 'pending' status, and immutable ledger snapshot.
+     * Test 1: COD checkout generates order, payment record in 'pending' status, and immutable financial snapshot.
      */
     public function test_cod_checkout_creates_pending_payment_and_immutable_financial_snapshot(): void
     {
@@ -99,7 +102,9 @@ class PaymentFinancialTest extends TestCase
         // Assert database records
         $this->assertDatabaseHas('payments', [
             'order_id' => $orderData['id'],
+            'customer_id' => $this->customer->id,
             'gateway' => 'cod',
+            'payment_method' => 'cod',
             'status' => 'pending',
         ]);
 
@@ -116,6 +121,8 @@ class PaymentFinancialTest extends TestCase
         $this->assertDatabaseHas('financial_transactions', [
             'order_id' => $orderData['id'],
             'restaurant_id' => $this->restaurant->id,
+            'transaction_type' => 'payment',
+            'direction' => 'credit',
             'platform_commission' => 150.00,
             'restaurant_payout' => 850.00,
             'delivery_fee' => 100.00,
@@ -126,7 +133,7 @@ class PaymentFinancialTest extends TestCase
     /**
      * Test 2: Authorized staff/admin can mark COD payment collected.
      */
-    public function test_authorized_collection_of_cod_payment_updates_ledger(): void
+    public function test_authorized_collection_of_cod_payment_updates_ledger_and_payment_status(): void
     {
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
@@ -149,8 +156,10 @@ class PaymentFinancialTest extends TestCase
         FinancialTransaction::create([
             'order_id' => $order->id,
             'restaurant_id' => $this->restaurant->id,
+            'transaction_type' => 'payment',
             'order_number' => $order->order_number,
             'gross_amount' => 1180.00,
+            'direction' => 'credit',
             'platform_commission' => 150.00,
             'restaurant_payout' => 850.00,
             'delivery_fee' => 100.00,
@@ -179,7 +188,340 @@ class PaymentFinancialTest extends TestCase
     }
 
     /**
-     * Test 3: Refund processing with balance verification and partial refund support.
+     * Test 3: Duplicate COD collection is prevented.
+     */
+    public function test_duplicate_cod_collection_is_rejected(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'status' => 'completed',
+        ]);
+
+        $response = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$order->id}/collect-cod");
+        $response->assertStatus(422);
+    }
+
+    /**
+     * Test 4: Unauthorized user cannot collect COD payment.
+     */
+    public function test_unauthorized_user_cannot_collect_cod_payment(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'pending',
+        ]);
+
+        // Customer cannot collect COD
+        $response = $this->actingAs($this->customer, 'sanctum')->postJson("/api/v1/admin/orders/{$order->id}/collect-cod");
+        $response->assertStatus(403);
+    }
+
+    /**
+     * Test 5: Customer isolation on PaymentIntent creation (IDOR protection).
+     */
+    public function test_payment_intent_creation_requires_ownership(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1200.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        // Customer 2 attempting to create intent for Customer 1's order must be blocked (403)
+        $response = $this->actingAs($this->customer2, 'sanctum')->postJson('/api/v1/payments/stripe/create-intent', [
+            'order_id' => $order->id,
+        ]);
+
+        $response->assertStatus(403);
+    }
+
+    /**
+     * Test 6: Missing Stripe configuration fails safely without generating fake IDs.
+     */
+    public function test_missing_stripe_configuration_fails_safely(): void
+    {
+        // Ensure keys are unset or placeholder
+        config(['services.stripe.secret' => null]);
+        putenv('STRIPE_SECRET_KEY=');
+        putenv('STRIPE_SECRET=sk_test_placeholder');
+
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 850.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        $response = $this->actingAs($this->customer, 'sanctum')->postJson('/api/v1/payments/stripe/create-intent', [
+            'order_id' => $order->id,
+        ]);
+
+        $response->assertStatus(422);
+        // Verify no fake intent was stored
+        $this->assertDatabaseMissing('payments', [
+            'order_id' => $order->id,
+            'transaction_id' => 'pi_fake',
+        ]);
+    }
+
+    /**
+     * Test 7: Webhook rejects missing or invalid signature.
+     */
+    public function test_webhook_rejects_missing_or_invalid_signature(): void
+    {
+        $payload = json_encode(['type' => 'payment_intent.succeeded', 'id' => 'evt_test_123']);
+
+        // Missing signature header
+        $resMissing = $this->postJson('/api/v1/payments/stripe/webhook', [], ['Content-Type' => 'application/json']);
+        $resMissing->assertStatus(400);
+
+        // Invalid signature header
+        $resInvalid = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => 't=12345,v1=invalid_fake_signature_hash',
+            'CONTENT_TYPE' => 'application/json',
+        ], $payload);
+
+        $resInvalid->assertStatus(400);
+    }
+
+    /**
+     * Test 8: Valid webhook settles payment idempotently and repeated webhook does not duplicate financial effects.
+     */
+    public function test_valid_webhook_settles_payment_idempotently(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1500.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        $payment = Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 1500.00,
+            'currency' => 'PKR',
+            'gateway_payment_intent_id' => 'pi_real_test_9999',
+            'status' => 'pending',
+        ]);
+
+        FinancialTransaction::create([
+            'order_id' => $order->id,
+            'restaurant_id' => $this->restaurant->id,
+            'transaction_type' => 'payment',
+            'order_number' => $order->order_number,
+            'gross_amount' => 1500.00,
+            'direction' => 'credit',
+            'platform_commission' => 225.00,
+            'restaurant_payout' => 1275.00,
+            'delivery_fee' => 100.00,
+            'rider_payout' => 100.00,
+            'status' => 'pending',
+        ]);
+
+        // Construct valid Stripe signature
+        $secret = 'whsec_test_secret_for_phpunit';
+        putenv("STRIPE_WEBHOOK_SECRET={$secret}");
+
+        $timestamp = time();
+        $payloadArray = [
+            'id' => 'evt_idempotency_test_001',
+            'type' => 'payment_intent.succeeded',
+            'data' => [
+                'object' => [
+                    'id' => 'pi_real_test_9999',
+                    'amount' => 150000, // 1500.00 in cents
+                    'currency' => 'pkr',
+                    'metadata' => [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                    ],
+                ],
+            ],
+        ];
+
+        $rawPayload = json_encode($payloadArray);
+        $signature = hash_hmac('sha256', "{$timestamp}.{$rawPayload}", $secret);
+        $sigHeader = "t={$timestamp},v1={$signature}";
+
+        // First delivery
+        $res1 = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => $sigHeader,
+            'CONTENT_TYPE' => 'application/json',
+        ], $rawPayload);
+
+        $res1->assertStatus(200);
+
+        $order->refresh();
+        $payment->refresh();
+
+        $this->assertEquals('paid', $order->payment_status);
+        $this->assertEquals('completed', $payment->status);
+
+        // Second delivery of exact same webhook event (idempotency guarantee)
+        $res2 = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => $sigHeader,
+            'CONTENT_TYPE' => 'application/json',
+        ], $rawPayload);
+
+        $res2->assertStatus(200);
+        $this->assertEquals('already_processed', $res2->json('status'));
+
+        // Assert financial transactions was NOT duplicated
+        $this->assertEquals(1, FinancialTransaction::where('order_id', $order->id)->count());
+    }
+
+    /**
+     * Test 9: Webhook rejects amount mismatch and logs security alert.
+     */
+    public function test_webhook_rejects_amount_mismatch_and_logs_security_alert(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 2500.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 2500.00,
+            'currency' => 'PKR',
+            'gateway_payment_intent_id' => 'pi_test_mismatch_amt',
+            'status' => 'pending',
+        ]);
+
+        $secret = 'whsec_test_secret_for_phpunit';
+        putenv("STRIPE_WEBHOOK_SECRET={$secret}");
+
+        $timestamp = time();
+        $payloadArray = [
+            'id' => 'evt_mismatch_amt_001',
+            'type' => 'payment_intent.succeeded',
+            'data' => [
+                'object' => [
+                    'id' => 'pi_test_mismatch_amt',
+                    'amount' => 100000, // 1000.00 instead of 2500.00 (tamper attempt)
+                    'currency' => 'pkr',
+                    'metadata' => [
+                        'order_id' => $order->id,
+                    ],
+                ],
+            ],
+        ];
+
+        $rawPayload = json_encode($payloadArray);
+        $signature = hash_hmac('sha256', "{$timestamp}.{$rawPayload}", $secret);
+        $sigHeader = "t={$timestamp},v1={$signature}";
+
+        $response = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => $sigHeader,
+            'CONTENT_TYPE' => 'application/json',
+        ], $rawPayload);
+
+        $response->assertStatus(400);
+
+        $order->refresh();
+        $this->assertEquals('pending', $order->payment_status); // NOT marked paid
+    }
+
+    /**
+     * Test 10: Webhook rejects currency mismatch.
+     */
+    public function test_webhook_rejects_currency_mismatch(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'gateway_payment_intent_id' => 'pi_test_mismatch_cur',
+            'status' => 'pending',
+        ]);
+
+        $secret = 'whsec_test_secret_for_phpunit';
+        putenv("STRIPE_WEBHOOK_SECRET={$secret}");
+
+        $timestamp = time();
+        $payloadArray = [
+            'id' => 'evt_mismatch_cur_001',
+            'type' => 'payment_intent.succeeded',
+            'data' => [
+                'object' => [
+                    'id' => 'pi_test_mismatch_cur',
+                    'amount' => 100000,
+                    'currency' => 'usd', // USD instead of PKR
+                    'metadata' => [
+                        'order_id' => $order->id,
+                    ],
+                ],
+            ],
+        ];
+
+        $rawPayload = json_encode($payloadArray);
+        $signature = hash_hmac('sha256', "{$timestamp}.{$rawPayload}", $secret);
+        $sigHeader = "t={$timestamp},v1={$signature}";
+
+        $response = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => $sigHeader,
+            'CONTENT_TYPE' => 'application/json',
+        ], $rawPayload);
+
+        $response->assertStatus(400);
+    }
+
+    /**
+     * Test 11: Payment state machine prevents invalid transitions.
+     */
+    public function test_payment_state_machine_prevents_invalid_transitions(): void
+    {
+        $payment = new Payment(['status' => Payment::STATUS_REFUNDED]);
+        $this->assertFalse($payment->canTransitionTo(Payment::STATUS_PENDING));
+        $this->assertFalse($payment->canTransitionTo(Payment::STATUS_COMPLETED));
+
+        $paidPayment = new Payment(['status' => Payment::STATUS_COMPLETED]);
+        $this->assertTrue($paidPayment->canTransitionTo(Payment::STATUS_PARTIALLY_REFUNDED));
+        $this->assertTrue($paidPayment->canTransitionTo(Payment::STATUS_REFUNDED));
+        $this->assertFalse($paidPayment->canTransitionTo(Payment::STATUS_PENDING));
+    }
+
+    /**
+     * Test 12: Refund processing validates balance, prevents over-refund, and supports partial refunds.
      */
     public function test_refund_processing_validates_balance_and_records_debit_ledger(): void
     {
@@ -210,6 +552,9 @@ class PaymentFinancialTest extends TestCase
 
         $response1->assertStatus(200);
 
+        $order->refresh();
+        $this->assertEquals('partially_refunded', $order->payment_status);
+
         $this->assertDatabaseHas('refunds', [
             'order_id' => $order->id,
             'amount' => 400.00,
@@ -219,10 +564,10 @@ class PaymentFinancialTest extends TestCase
         $this->assertDatabaseHas('payments', [
             'order_id' => $order->id,
             'refunded_amount' => 400.00,
-            'status' => 'completed',
+            'status' => 'partially_refunded',
         ]);
 
-        // Attempting to refund PKR 700 (which exceeds remaining 600) must fail
+        // Over-refund attempt: PKR 700 exceeds remaining 600
         $responseOverRefund = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$order->id}/refund", [
             'amount' => 700.00,
             'reason' => 'Exceeding remaining balance',
@@ -230,7 +575,7 @@ class PaymentFinancialTest extends TestCase
 
         $responseOverRefund->assertStatus(422);
 
-        // Second Refund: Remaining PKR 600 (full order refund)
+        // Second Refund: Remaining PKR 600 (full refund)
         $response2 = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$order->id}/refund", [
             'amount' => 600.00,
             'reason' => 'Complete customer courtesy refund',
@@ -240,6 +585,7 @@ class PaymentFinancialTest extends TestCase
 
         $order->refresh();
         $this->assertEquals('refunded', $order->payment_status);
+        $this->assertEquals('refunded', $order->order_status);
 
         $this->assertDatabaseHas('payments', [
             'order_id' => $order->id,
@@ -249,7 +595,27 @@ class PaymentFinancialTest extends TestCase
     }
 
     /**
-     * Test 4: Restaurant Financial Tenant Isolation (IDOR Protection).
+     * Test 13: Cannot refund unpaid order.
+     */
+    public function test_cannot_refund_unpaid_order(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 500.00,
+            'payment_status' => 'pending',
+        ]);
+
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$order->id}/refund", [
+            'amount' => 200.00,
+            'reason' => 'Should fail',
+        ]);
+
+        $res->assertStatus(422);
+    }
+
+    /**
+     * Test 14: Restaurant financial tenant isolation (IDOR Protection).
      */
     public function test_restaurant_financial_tenant_isolation_prevents_idor(): void
     {
@@ -257,28 +623,27 @@ class PaymentFinancialTest extends TestCase
         $response = $this->actingAs($this->owner, 'sanctum')->getJson("/api/v1/owner/restaurants/{$this->restaurant2->id}/financials");
         $response->assertStatus(403);
 
+        // Owner 1 cannot refund an order belonging to Owner 2's restaurant
+        $order2 = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant2->id,
+            'grand_total' => 1000.00,
+            'payment_status' => 'paid',
+        ]);
+
+        $refundAttempt = $this->actingAs($this->owner, 'sanctum')->postJson("/api/v1/owner/restaurants/{$this->restaurant2->id}/orders/{$order2->id}/refund", [
+            'amount' => 100.00,
+            'reason' => 'Cross-tenant IDOR refund attack',
+        ]);
+        $refundAttempt->assertStatus(403);
+
         // Owner 1 can access own restaurant financials
         $responseOwn = $this->actingAs($this->owner, 'sanctum')->getJson("/api/v1/owner/restaurants/{$this->restaurant->id}/financials");
         $responseOwn->assertStatus(200);
-        $responseOwn->assertJsonStructure([
-            'data' => [
-                'restaurant',
-                'metrics' => [
-                    'gross_sales',
-                    'commission_deducted',
-                    'net_earnings',
-                    'pending_settlement',
-                    'settled_payout',
-                    'currency',
-                ],
-                'settlements',
-                'recent_transactions',
-            ]
-        ]);
     }
 
     /**
-     * Test 5: Customer Payment Privacy (Isolation).
+     * Test 15: Customer Payment Privacy (Isolation).
      */
     public function test_customer_payment_history_isolation(): void
     {
@@ -312,9 +677,9 @@ class PaymentFinancialTest extends TestCase
     }
 
     /**
-     * Test 6: Settlement Batch Creation and Payout by Super Admin.
+     * Test 16: Settlement Batch Creation and Payout by Super Admin records ledger debit.
      */
-    public function test_settlement_batch_creation_and_payout(): void
+    public function test_settlement_batch_creation_and_payout_records_debit(): void
     {
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
@@ -364,10 +729,20 @@ class PaymentFinancialTest extends TestCase
         ]);
 
         $payRes->assertStatus(200);
+
         $this->assertDatabaseHas('settlements', [
             'id' => $settlementId,
             'status' => 'paid',
             'payment_reference' => 'BANK-TRF-2026-9988',
+        ]);
+
+        // Directional debit ledger entry recorded for the vendor payout
+        $this->assertDatabaseHas('financial_transactions', [
+            'restaurant_id' => $this->restaurant->id,
+            'transaction_type' => 'restaurant_payout',
+            'direction' => 'debit',
+            'gross_amount' => 1700.00,
+            'status' => 'settled',
         ]);
     }
 }

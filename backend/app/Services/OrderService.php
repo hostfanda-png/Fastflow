@@ -267,11 +267,13 @@ class OrderService
             // Initial Payment record
             Payment::create([
                 'order_id' => $order->id,
+                'customer_id' => $customer->id,
                 'gateway' => $paymentMethod,
+                'payment_method' => $paymentMethod,
                 'transaction_id' => null,
                 'amount' => $grandTotal,
                 'currency' => env('DEFAULT_CURRENCY_CODE', 'PKR'),
-                'status' => 'pending',
+                'status' => Payment::STATUS_PENDING,
             ]);
 
             // Record immutable commission calculation
@@ -293,8 +295,10 @@ class OrderService
             FinancialTransaction::create([
                 'order_id' => $order->id,
                 'restaurant_id' => $restaurant->id,
+                'transaction_type' => 'payment',
                 'order_number' => $order->order_number,
                 'gross_amount' => $grandTotal,
+                'direction' => 'credit',
                 'platform_commission' => $platformCommission,
                 'restaurant_payout' => $restaurantPayout,
                 'delivery_fee' => $deliveryFee,

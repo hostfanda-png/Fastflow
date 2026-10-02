@@ -52,11 +52,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [newArea, setNewArea] = useState('Gulberg III');
   const [newCity, setNewCity] = useState('Lahore');
 
-  // Simulated credit card state
-  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242');
-  const [cardExp, setCardExp] = useState('12/28');
-  const [cardCvc, setCardCvc] = useState('888');
-
   if (!isOpen) return null;
 
   const handleSaveNewAddress = (e: React.FormEvent) => {
@@ -288,38 +283,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </label>
             </div>
 
-            {/* Simulated Stripe Card Fields */}
+            {/* Stripe Card Integration Information */}
             {paymentMethod === 'stripe' && (
-              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
+              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
                 <div className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Stripe PCI-DSS Card Sandbox</span>
+                  <span>Stripe PCI-DSS Card Infrastructure</span>
                 </div>
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={cardNumber}
-                    onChange={(e) => setCardNumber(e.target.value)}
-                    placeholder="Card Number"
-                    className="w-full text-xs p-2 bg-white border border-stone-200 rounded-xl font-mono"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={cardExp}
-                      onChange={(e) => setCardExp(e.target.value)}
-                      placeholder="MM/YY"
-                      className="text-xs p-2 bg-white border border-stone-200 rounded-xl font-mono"
-                    />
-                    <input
-                      type="text"
-                      value={cardCvc}
-                      onChange={(e) => setCardCvc(e.target.value)}
-                      placeholder="CVC"
-                      className="text-xs p-2 bg-white border border-stone-200 rounded-xl font-mono"
-                    />
-                  </div>
-                </div>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  Upon placing your order, Fastflow server will initialize a server-authoritative Stripe PaymentIntent with exact order totals. Card payment status transitions upon verified webhook receipt.
+                </p>
               </div>
             )}
           </div>
