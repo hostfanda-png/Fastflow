@@ -745,4 +745,112 @@ class PaymentFinancialTest extends TestCase
             'status' => 'settled',
         ]);
     }
+
+    /**
+     * Test 17: Order delivered status does NOT automatically mark payment paid.
+     * Enforces strict state machine separation between order fulfillment and payment collection.
+     */
+    public function test_order_delivered_status_does_not_automatically_mark_payment_paid(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 950.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'pending',
+            'order_status' => 'on_the_way',
+        ]);
+
+        $payment = Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'payment_method' => 'cod',
+            'amount' => 950.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_PENDING,
+        ]);
+
+        // Transition order status to delivered
+        $orderService = app(\App\Services\OrderService::class);
+        $orderService->updateStatus($order, 'delivered', 'Handed over by courier', 'Courier Express');
+
+        $order->refresh();
+        $payment->refresh();
+
+        // Fulfillment status is delivered, but payment MUST remain pending until authorized collection
+        $this->assertEquals('delivered', $order->order_status);
+        $this->assertEquals('pending', $order->payment_status);
+        $this->assertEquals(Payment::STATUS_PENDING, $payment->status);
+
+        // Now perform authorized collection action
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/orders/{$order->id}/collect-cod", [
+            'reference' => 'COD-CASH-TEST-99',
+        ]);
+
+        $res->assertStatus(200);
+
+        $order->refresh();
+        $payment->refresh();
+
+        $this->assertEquals('paid', $order->payment_status);
+        $this->assertEquals(Payment::STATUS_COMPLETED, $payment->status);
+    }
+
+    /**
+     * Test 18: Unpaid and fully refunded orders are excluded from settlement batch.
+     */
+    public function test_unpaid_and_fully_refunded_orders_are_excluded_from_settlement_batch(): void
+    {
+        // Unpaid order with pending commission
+        $unpaidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'subtotal' => 1000.00,
+            'grand_total' => 1150.00,
+            'payment_status' => 'pending',
+        ]);
+
+        Commission::create([
+            'order_id' => $unpaidOrder->id,
+            'restaurant_id' => $this->restaurant->id,
+            'order_subtotal' => 1000.00,
+            'commission_rate' => 15.00,
+            'commission_amount' => 150.00,
+            'restaurant_net_payout' => 850.00,
+            'settlement_status' => 'pending',
+            'created_at' => now()->subDay(),
+        ]);
+
+        // Fully refunded order with pending commission
+        $refundedOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'subtotal' => 500.00,
+            'grand_total' => 600.00,
+            'payment_status' => 'refunded',
+            'order_status' => 'refunded',
+        ]);
+
+        Commission::create([
+            'order_id' => $refundedOrder->id,
+            'restaurant_id' => $this->restaurant->id,
+            'order_subtotal' => 500.00,
+            'commission_rate' => 15.00,
+            'commission_amount' => 75.00,
+            'restaurant_net_payout' => 425.00,
+            'settlement_status' => 'pending',
+            'created_at' => now()->subDay(),
+        ]);
+
+        // Attempting to settle should find NO eligible paid orders
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson('/api/v1/admin/settlements', [
+            'restaurant_id' => $this->restaurant->id,
+            'period_start' => now()->subDays(7)->toDateString(),
+            'period_end' => now()->toDateString(),
+        ]);
+
+        // Fails with 422 because no eligible settled orders exist
+        $res->assertStatus(422);
+    }
 }

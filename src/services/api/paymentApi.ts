@@ -67,11 +67,11 @@ export const paymentApi = {
   },
 
   markCodCollected: async (orderId: string | number, reference?: string): Promise<ApiResponse<any>> => {
-    return apiClient.post(`/admin/orders/${orderId}/collect-cod`, { reference });
+    return apiClient.post(`/orders/${orderId}/collect-cod`, { reference });
   },
 
   refundOrder: async (orderId: string | number, amount: number, reason: string): Promise<ApiResponse<any>> => {
-    return apiClient.post(`/admin/orders/${orderId}/refund`, { amount, reason });
+    return apiClient.post(`/orders/${orderId}/refund`, { amount, reason });
   },
 
   getRestaurantFinancials: async (restaurantId: string | number, params?: any): Promise<ApiResponse<RestaurantFinancialSummary>> => {

@@ -60,6 +60,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [OrderController::class, 'index']);
             Route::get('{order}', [OrderController::class, 'show']);
             Route::post('{order}/cancel', [OrderController::class, 'cancel']);
+            Route::post('{order}/refund', [PaymentController::class, 'refund']);
+            Route::post('{order}/collect-cod', [PaymentController::class, 'collectCod']);
         });
 
         // Payments

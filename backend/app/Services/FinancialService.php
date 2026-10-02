@@ -46,12 +46,12 @@ class FinancialService
             $settlementQuery->where('restaurant_id', $filters['restaurant_id']);
         }
 
-        // Aggregate statistics directly on database engine
+        // Aggregate statistics strictly from SETTLED financial transactions
         $totalGrossVolume = (float)(clone $orderQuery)->where('payment_status', 'paid')->sum('grand_total');
-        $totalPlatformCommission = (float)(clone $ftQuery)->where('direction', 'credit')->sum('platform_commission');
-        $totalRestaurantPayouts = (float)(clone $ftQuery)->where('direction', 'credit')->sum('restaurant_payout');
-        $totalDeliveryFees = (float)(clone $ftQuery)->where('direction', 'credit')->sum('delivery_fee');
-        $totalRiderPayouts = (float)(clone $ftQuery)->where('direction', 'credit')->sum('rider_payout');
+        $totalPlatformCommission = (float)(clone $ftQuery)->where('status', 'settled')->where('direction', 'credit')->sum('platform_commission');
+        $totalRestaurantPayouts = (float)(clone $ftQuery)->where('status', 'settled')->where('direction', 'credit')->sum('restaurant_payout');
+        $totalDeliveryFees = (float)(clone $ftQuery)->where('status', 'settled')->where('direction', 'credit')->sum('delivery_fee');
+        $totalRiderPayouts = (float)(clone $ftQuery)->where('status', 'settled')->where('direction', 'credit')->sum('rider_payout');
         $totalRefundedAmount = (float)(clone $refundQuery)->where('status', Refund::STATUS_COMPLETED)->sum('amount');
         
         $totalPaidOrders = (int)(clone $orderQuery)->where('payment_status', 'paid')->count();
@@ -87,7 +87,8 @@ class FinancialService
     }
 
     /**
-     * Isolated financial summary for Restaurant Owner Dashboard
+     * Isolated financial summary for Restaurant Owner Dashboard.
+     * Enforces that earnings reflect paid orders minus completed refunds.
      */
     public function getRestaurantFinancialSummary(int $restaurantId, array $filters = []): array
     {
@@ -95,25 +96,38 @@ class FinancialService
 
         $orderQuery = Order::where('restaurant_id', $restaurantId);
         $ftQuery = FinancialTransaction::where('restaurant_id', $restaurantId);
-        $commQuery = Commission::where('restaurant_id', $restaurantId);
+        $commQuery = Commission::where('restaurant_id', $restaurantId)
+            ->whereHas('order', function ($query) {
+                $query->where('payment_status', 'paid');
+            });
         $settlementQuery = Settlement::where('restaurant_id', $restaurantId);
+        $refundQuery = Refund::whereHas('order', function ($query) use ($restaurantId) {
+            $query->where('restaurant_id', $restaurantId);
+        })->where('status', Refund::STATUS_COMPLETED);
 
         if (!empty($filters['start_date'])) {
             $orderQuery->whereDate('created_at', '>=', $filters['start_date']);
             $ftQuery->whereDate('created_at', '>=', $filters['start_date']);
             $commQuery->whereDate('created_at', '>=', $filters['start_date']);
+            $settlementQuery->whereDate('created_at', '>=', $filters['start_date']);
+            $refundQuery->whereDate('created_at', '>=', $filters['start_date']);
         }
 
         if (!empty($filters['end_date'])) {
             $orderQuery->whereDate('created_at', '<=', $filters['end_date']);
             $ftQuery->whereDate('created_at', '<=', $filters['end_date']);
             $commQuery->whereDate('created_at', '<=', $filters['end_date']);
+            $settlementQuery->whereDate('created_at', '<=', $filters['end_date']);
+            $refundQuery->whereDate('created_at', '<=', $filters['end_date']);
         }
 
         $grossSales = (float)(clone $orderQuery)->where('payment_status', 'paid')->sum('subtotal');
         $commissionDeducted = (float)(clone $commQuery)->sum('commission_amount');
-        $netEarnings = (float)(clone $commQuery)->sum('restaurant_net_payout');
+        $rawNetEarnings = (float)(clone $commQuery)->sum('restaurant_net_payout');
+        $totalRefundsDeducted = (float)(clone $refundQuery)->sum('amount');
         
+        $netEarnings = max(0.00, round($rawNetEarnings - $totalRefundsDeducted, 2));
+
         $pendingSettlement = (float)(clone $commQuery)->where('settlement_status', 'pending')->sum('restaurant_net_payout');
         $settledPayout = (float)(clone $settlementQuery)->where('status', Settlement::STATUS_PAID)->sum('net_payout');
 
@@ -140,27 +154,40 @@ class FinancialService
     }
 
     /**
-     * Create a settlement batch for a restaurant with strict concurrency locking
+     * Create a settlement batch for a restaurant with strict concurrency locking.
+     * Prevents settling unpaid orders or already fully refunded orders.
      */
     public function createSettlementBatch(int $restaurantId, string $periodStart, string $periodEnd, User $admin, ?string $notes = null): Settlement
     {
         return DB::transaction(function () use ($restaurantId, $periodStart, $periodEnd, $admin, $notes) {
             $restaurant = Restaurant::findOrFail($restaurantId);
 
+            // Settle only orders that were successfully PAID and not fully REFUNDED
             $pendingCommissions = Commission::where('restaurant_id', $restaurantId)
                 ->where('settlement_status', 'pending')
+                ->whereHas('order', function ($query) {
+                    $query->where('payment_status', 'paid')->where('order_status', '!=', 'refunded');
+                })
                 ->whereDate('created_at', '>=', $periodStart)
                 ->whereDate('created_at', '<=', $periodEnd)
                 ->lockForUpdate()
                 ->get();
 
             if ($pendingCommissions->isEmpty()) {
-                throw new Exception("No unsettled orders found for {$restaurant->name} between {$periodStart} and {$periodEnd}.");
+                throw new Exception("No eligible settled orders found for {$restaurant->name} between {$periodStart} and {$periodEnd}.");
             }
 
             $grossSales = (float)$pendingCommissions->sum('order_subtotal');
             $platformCommission = (float)$pendingCommissions->sum('commission_amount');
-            $netPayout = (float)$pendingCommissions->sum('restaurant_net_payout');
+            $rawNetPayout = (float)$pendingCommissions->sum('restaurant_net_payout');
+
+            // Account for any partial refunds on these orders
+            $orderIds = $pendingCommissions->pluck('order_id')->toArray();
+            $refundsDeduction = (float)Refund::whereIn('order_id', $orderIds)
+                ->where('status', Refund::STATUS_COMPLETED)
+                ->sum('amount');
+
+            $netPayout = max(0.00, round($rawNetPayout - $refundsDeduction, 2));
 
             $settlementNumber = 'SETTLE-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
 
@@ -172,7 +199,7 @@ class FinancialService
                 'gross_sales' => $grossSales,
                 'platform_commission' => $platformCommission,
                 'tax_collected' => 0.00,
-                'total_deductions' => $platformCommission,
+                'total_deductions' => round($platformCommission + $refundsDeduction, 2),
                 'net_payout' => $netPayout,
                 'status' => Settlement::STATUS_APPROVED,
                 'payout_method' => 'bank_transfer',

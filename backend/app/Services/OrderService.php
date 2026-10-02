@@ -349,18 +349,6 @@ class OrderService
         }
 
         $order->order_status = $newStatus;
-
-        // When order is delivered and payment method is COD, mark payment as paid
-        if ($newStatus === 'delivered') {
-            $order->payment_status = 'paid';
-            Payment::where('order_id', $order->id)->update(['status' => 'completed']);
-            FinancialTransaction::where('order_id', $order->id)->update(['status' => 'settled']);
-        } elseif ($newStatus === 'refunded') {
-            $order->payment_status = 'refunded';
-            Payment::where('order_id', $order->id)->update(['status' => 'refunded']);
-            FinancialTransaction::where('order_id', $order->id)->update(['status' => 'refunded']);
-        }
-
         $order->save();
 
         OrderStatusHistory::create([
