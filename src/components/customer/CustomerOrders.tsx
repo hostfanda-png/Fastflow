@@ -99,8 +99,25 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({
                     <div className="text-sm font-extrabold font-mono tabular-nums text-stone-900">
                       {formatCurrency(order.grandTotal)}
                     </div>
-                    <div className="text-[11px] text-stone-400 capitalize">
-                      {order.paymentMethod.toUpperCase()} · {order.items.length} dishes
+                    <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                      <span className="text-[11px] text-stone-400 uppercase font-mono">
+                        {order.paymentMethod}
+                      </span>
+                      <span className="text-stone-300">·</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
+                        order.paymentStatus === 'paid' 
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                          : order.paymentStatus === 'refunded'
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                          : order.paymentStatus === 'failed'
+                          ? 'bg-red-50 text-red-700 border border-red-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}>
+                        {order.paymentStatus}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-stone-400 mt-0.5">
+                      {order.items.length} {order.items.length === 1 ? 'item' : 'items'}
                     </div>
                   </div>
 
