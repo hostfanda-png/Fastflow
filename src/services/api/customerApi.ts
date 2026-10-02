@@ -78,12 +78,12 @@ export const customerApi = {
     return apiClient.get<FavoritesResponse>('/customer/favorites');
   },
 
-  toggleRestaurantFavorite: async (restaurantId: string | number): Promise<ApiResponse<{ is_favorite: boolean }>> => {
-    return apiClient.post<{ is_favorite: boolean }>(`/customer/favorites/restaurants/${restaurantId}`, {});
+  toggleRestaurantFavorite: async (restaurantId: string | number): Promise<ApiResponse<{ is_favorite: boolean; restaurant_id?: number; favorite?: FavoriteItem }>> => {
+    return apiClient.post<{ is_favorite: boolean; restaurant_id?: number; favorite?: FavoriteItem }>(`/customer/favorites/restaurants/${restaurantId}`, {});
   },
 
-  toggleProductFavorite: async (productId: string | number): Promise<ApiResponse<{ is_favorite: boolean }>> => {
-    return apiClient.post<{ is_favorite: boolean }>(`/customer/favorites/products/${productId}`, {});
+  toggleProductFavorite: async (productId: string | number): Promise<ApiResponse<{ is_favorite: boolean; product_id?: number; favorite?: FavoriteItem }>> => {
+    return apiClient.post<{ is_favorite: boolean; product_id?: number; favorite?: FavoriteItem }>(`/customer/favorites/products/${productId}`, {});
   },
 
   getNotifications: async (params?: { per_page?: number; page?: number }): Promise<ApiResponse<NotificationsResponse>> => {

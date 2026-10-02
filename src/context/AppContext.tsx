@@ -1346,14 +1346,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await customerApi.toggleRestaurantFavorite(restaurantId);
       if (res.success && res.data) {
         const isFav = res.data.is_favorite;
-        if (isFav) {
-          const rest = restaurants.find((r) => r.id === String(restaurantId));
-          if (rest) {
-            setFavorites((prev) => ({
-              ...prev,
-              restaurants: [{ id: `fav-${restaurantId}`, type: 'restaurant', restaurant: rest, created_at: new Date().toISOString() }, ...prev.restaurants]
-            }));
-          }
+        const favRecord = res.data.favorite;
+        if (isFav && favRecord) {
+          setFavorites((prev) => ({
+            ...prev,
+            restaurants: [favRecord, ...prev.restaurants.filter((f) => String(f.restaurant?.id) !== String(restaurantId))]
+          }));
           showToast('Added to favorites', 'success');
         } else {
           setFavorites((prev) => ({
@@ -1362,6 +1360,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           showToast('Removed from favorites', 'info');
         }
+        // Background synchronization with authoritative server list
+        customerApi.getFavorites().then((favRes) => {
+          if (favRes.success && favRes.data) {
+            setFavorites({
+              restaurants: favRes.data.restaurants || [],
+              products: favRes.data.products || []
+            });
+          }
+        }).catch(() => {});
         return isFav;
       }
       return false;
@@ -1380,14 +1387,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await customerApi.toggleProductFavorite(productId);
       if (res.success && res.data) {
         const isFav = res.data.is_favorite;
-        if (isFav) {
-          const prod = products.find((p) => p.id === String(productId));
-          if (prod) {
-            setFavorites((prev) => ({
-              ...prev,
-              products: [{ id: `fav-${productId}`, type: 'product', product: prod, created_at: new Date().toISOString() }, ...prev.products]
-            }));
-          }
+        const favRecord = res.data.favorite;
+        if (isFav && favRecord) {
+          setFavorites((prev) => ({
+            ...prev,
+            products: [favRecord, ...prev.products.filter((f) => String(f.product?.id) !== String(productId))]
+          }));
           showToast('Saved to favorite dishes', 'success');
         } else {
           setFavorites((prev) => ({
@@ -1396,6 +1401,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           showToast('Removed from favorites', 'info');
         }
+        // Background synchronization with authoritative server list
+        customerApi.getFavorites().then((favRes) => {
+          if (favRes.success && favRes.data) {
+            setFavorites({
+              restaurants: favRes.data.restaurants || [],
+              products: favRes.data.products || []
+            });
+          }
+        }).catch(() => {});
         return isFav;
       }
       return false;
@@ -1408,10 +1422,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Notifications
   const markNotificationAsRead = async (id: string) => {
     try {
-      await customerApi.markNotificationRead(id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
-      );
+      const res = await customerApi.markNotificationRead(id);
+      if (res.success && res.data) {
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === id ? { ...n, read_at: res.data.read_at } : n))
+        );
+      } else {
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
+        );
+      }
       setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
     } catch {
       // Ignored
@@ -1421,10 +1441,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const markAllNotificationsAsRead = async () => {
     try {
       await customerApi.markAllNotificationsRead();
-      setNotifications((prev) =>
-        prev.map((n) => ({ ...n, read_at: new Date().toISOString() }))
-      );
-      setUnreadNotificationsCount(0);
+      const notifRes = await customerApi.getNotifications();
+      if (notifRes.success && notifRes.data) {
+        setNotifications(notifRes.data.notifications || []);
+        setUnreadNotificationsCount(notifRes.data.unread_count || 0);
+      }
       showToast('All notifications marked as read', 'info');
     } catch {
       // Ignored

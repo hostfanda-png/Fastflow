@@ -45,7 +45,7 @@ export const FoodItemModal: React.FC<FoodItemModalProps> = ({
 
   const handleConfirm = () => {
     const cartLine: CartItem = {
-      id: `${product.id}-${Date.now()}`,
+      id: String(product.id),
       productId: String(product.id),
       productName: product.name,
       productImage: product.image,

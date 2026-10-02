@@ -130,18 +130,20 @@ class CustomerController extends Controller
             'is_default' => ['sometimes', 'boolean'],
         ]);
 
-        if (!empty($validated['is_default'])) {
-            CustomerAddress::where('user_id', $user->id)->update(['is_default' => false]);
-        } else {
-            // First address created defaults to default
-            if (CustomerAddress::where('user_id', $user->id)->count() === 0) {
-                $validated['is_default'] = true;
+        $address = \Illuminate\Support\Facades\DB::transaction(function () use ($user, $validated) {
+            if (!empty($validated['is_default'])) {
+                CustomerAddress::where('user_id', $user->id)->update(['is_default' => false]);
+            } else {
+                // First address created defaults to default
+                if (CustomerAddress::where('user_id', $user->id)->count() === 0) {
+                    $validated['is_default'] = true;
+                }
             }
-        }
 
-        // Strict derivation: never trust client-supplied customer_id
-        $validated['user_id'] = $user->id;
-        $address = CustomerAddress::create($validated);
+            // Strict derivation: never trust client-supplied customer_id
+            $validated['user_id'] = $user->id;
+            return CustomerAddress::create($validated);
+        });
 
         AuditService::log('customer.add_address', 'Customer', (string)$address->id, "Added address {$address->label}", $user);
 
@@ -166,29 +168,34 @@ class CustomerController extends Controller
             'is_default' => ['sometimes', 'boolean'],
         ]);
 
-        if (!empty($validated['is_default'])) {
-            CustomerAddress::where('user_id', $user->id)->where('id', '!=', $id)->update(['is_default' => false]);
-        }
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $address, $validated, $id) {
+            if (!empty($validated['is_default'])) {
+                CustomerAddress::where('user_id', $user->id)->where('id', '!=', $id)->update(['is_default' => false]);
+            }
 
-        $address->update($validated);
+            $address->update($validated);
+        });
 
-        return $this->sendResponse($address, 'Address updated successfully');
+        return $this->sendResponse($address->fresh(), 'Address updated successfully');
     }
 
     public function deleteAddress(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
         $address = CustomerAddress::where('user_id', $user->id)->findOrFail($id);
-        $wasDefault = $address->is_default;
-        $address->delete();
 
-        // If default address was deleted, promote another address if one exists
-        if ($wasDefault) {
-            $next = CustomerAddress::where('user_id', $user->id)->first();
-            if ($next) {
-                $next->update(['is_default' => true]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $address) {
+            $wasDefault = $address->is_default;
+            $address->delete();
+
+            // If default address was deleted, promote another address if one exists
+            if ($wasDefault) {
+                $next = CustomerAddress::where('user_id', $user->id)->first();
+                if ($next) {
+                    $next->update(['is_default' => true]);
+                }
             }
-        }
+        });
 
         AuditService::log('customer.delete_address', 'Customer', (string)$id, 'Deleted delivery address', $user);
 
@@ -200,10 +207,12 @@ class CustomerController extends Controller
         $user = $request->user();
         $address = CustomerAddress::where('user_id', $user->id)->findOrFail($id);
 
-        CustomerAddress::where('user_id', $user->id)->update(['is_default' => false]);
-        $address->update(['is_default' => true]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $address) {
+            CustomerAddress::where('user_id', $user->id)->update(['is_default' => false]);
+            $address->update(['is_default' => true]);
+        });
 
-        return $this->sendResponse($address, 'Default delivery address updated');
+        return $this->sendResponse($address->fresh(), 'Default delivery address updated');
     }
 
     // Favorites Management
@@ -246,18 +255,34 @@ class CustomerController extends Controller
         $user = $request->user();
         $restaurant = Restaurant::findOrFail($restaurantId);
 
-        $existing = Favorite::where('user_id', $user->id)->where('restaurant_id', $restaurant->id)->first();
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($user, $restaurant) {
+            $existing = Favorite::where('user_id', $user->id)->where('restaurant_id', $restaurant->id)->first();
 
-        if ($existing) {
-            $existing->delete();
-            return $this->sendResponse(['is_favorite' => false], "Removed {$restaurant->name} from favorites");
-        } else {
-            Favorite::create([
-                'user_id' => $user->id,
-                'restaurant_id' => $restaurant->id,
-            ]);
-            return $this->sendResponse(['is_favorite' => true], "Added {$restaurant->name} to favorites", 201);
-        }
+            if ($existing) {
+                $existing->delete();
+                return $this->sendResponse([
+                    'is_favorite' => false,
+                    'restaurant_id' => $restaurant->id,
+                ], "Removed {$restaurant->name} from favorites");
+            } else {
+                $fav = Favorite::create([
+                    'user_id' => $user->id,
+                    'restaurant_id' => $restaurant->id,
+                ]);
+                $fav->load(['restaurant.cuisines']);
+
+                return $this->sendResponse([
+                    'is_favorite' => true,
+                    'restaurant_id' => $restaurant->id,
+                    'favorite' => [
+                        'id' => $fav->id,
+                        'type' => 'restaurant',
+                        'restaurant' => $fav->restaurant,
+                        'created_at' => $fav->created_at,
+                    ],
+                ], "Added {$restaurant->name} to favorites", 201);
+            }
+        });
     }
 
     public function toggleProductFavorite(Request $request, int $productId): JsonResponse
@@ -265,18 +290,34 @@ class CustomerController extends Controller
         $user = $request->user();
         $product = Product::findOrFail($productId);
 
-        $existing = ProductFavorite::where('user_id', $user->id)->where('product_id', $product->id)->first();
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($user, $product) {
+            $existing = ProductFavorite::where('user_id', $user->id)->where('product_id', $product->id)->first();
 
-        if ($existing) {
-            $existing->delete();
-            return $this->sendResponse(['is_favorite' => false], "Removed {$product->name} from saved dishes");
-        } else {
-            ProductFavorite::create([
-                'user_id' => $user->id,
-                'product_id' => $product->id,
-            ]);
-            return $this->sendResponse(['is_favorite' => true], "Saved {$product->name} to favorites", 201);
-        }
+            if ($existing) {
+                $existing->delete();
+                return $this->sendResponse([
+                    'is_favorite' => false,
+                    'product_id' => $product->id,
+                ], "Removed {$product->name} from saved dishes");
+            } else {
+                $fav = ProductFavorite::create([
+                    'user_id' => $user->id,
+                    'product_id' => $product->id,
+                ]);
+                $fav->load(['product.restaurant', 'product.category']);
+
+                return $this->sendResponse([
+                    'is_favorite' => true,
+                    'product_id' => $product->id,
+                    'favorite' => [
+                        'id' => $fav->id,
+                        'type' => 'product',
+                        'product' => $fav->product,
+                        'created_at' => $fav->created_at,
+                    ],
+                ], "Saved {$product->name} to favorites", 201);
+            }
+        });
     }
 
     // Notifications Management

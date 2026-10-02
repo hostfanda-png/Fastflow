@@ -18,6 +18,8 @@ use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\Review;
 use App\Models\Notification;
+use App\Models\Coupon;
+use App\Models\CouponUsage;
 use App\Models\RestaurantDeliveryZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
@@ -174,46 +176,87 @@ class CustomerExperienceOrderingTest extends TestCase
         $favRest = $this->actingAs($this->customer, 'sanctum')
             ->postJson("/api/v1/customer/favorites/{$this->restaurant->id}");
         $favRest->assertStatus(200)
-            ->assertJsonPath('data.favorited', true);
+            ->assertJsonPath('data.is_favorite', true);
 
         // Toggle favorite off
         $unfavRest = $this->actingAs($this->customer, 'sanctum')
             ->postJson("/api/v1/customer/favorites/{$this->restaurant->id}");
         $unfavRest->assertStatus(200)
-            ->assertJsonPath('data.favorited', false);
+            ->assertJsonPath('data.is_favorite', false);
 
         // Favorite product
         $favProd = $this->actingAs($this->customer, 'sanctum')
             ->postJson("/api/v1/customer/favorites/products/{$this->product->id}");
         $favProd->assertStatus(200)
-            ->assertJsonPath('data.favorited', true);
+            ->assertJsonPath('data.is_favorite', true);
     }
 
     // 4. Cart Conflict & Server-Authoritative Price Recalculation
     public function test_cart_validates_single_restaurant_and_recalculates_prices(): void
     {
         // Validate cart with server-side pricing
-        $calcResponse = $this->postJson('/api/v1/cart/validate', [
-            'restaurant_id' => $this->restaurant->id,
-            'items' => [
-                [
-                    'product_id' => $this->product->id,
-                    'quantity' => 2,
-                ]
-            ]
-        ]);
+        $calcResponse = $this->actingAs($this->customer, 'sanctum')
+            ->postJson('/api/v1/cart/items', [
+                'product_id' => $this->product->id,
+                'quantity' => 2,
+            ]);
 
         $calcResponse->assertStatus(200)
             ->assertJsonPath('status', 'success')
             ->assertJsonPath('data.subtotal', 700.00);
     }
 
-    // 5. Order Cancellation Rules
+    // 5. Checkout Idempotency & Order Creation
+    public function test_checkout_idempotency_prevents_duplicate_orders(): void
+    {
+        $address = CustomerAddress::create([
+            'user_id' => $this->customer->id,
+            'street' => '123 Test St',
+            'city' => 'Beverly Hills',
+            'area' => 'Downtown',
+            'lat' => 34.0530,
+            'lng' => -118.2440,
+            'is_default' => true,
+        ]);
+
+        $idempotencyKey = 'idempotent-order-key-12345';
+
+        $orderPayload = [
+            'restaurant_id' => $this->restaurant->id,
+            'address_id' => $address->id,
+            'items' => [
+                [
+                    'product_id' => $this->product->id,
+                    'quantity' => 1,
+                ]
+            ],
+            'payment_method' => 'cod',
+            'idempotency_key' => $idempotencyKey,
+        ];
+
+        $firstAttempt = $this->actingAs($this->customer, 'sanctum')
+            ->postJson('/api/v1/orders/checkout', $orderPayload);
+        $firstAttempt->assertStatus(201);
+        $orderId = $firstAttempt->json('data.id');
+
+        // Second attempt with same idempotency key returns identical order without duplication
+        $secondAttempt = $this->actingAs($this->customer, 'sanctum')
+            ->postJson('/api/v1/orders/checkout', $orderPayload);
+        $secondAttempt->assertStatus(201)
+            ->assertJsonPath('data.id', $orderId);
+
+        // Another customer cannot reuse the idempotency key (prevent cross-tenant leak)
+        $attackAttempt = $this->actingAs($this->otherCustomer, 'sanctum')
+            ->postJson('/api/v1/orders/checkout', $orderPayload);
+        $attackAttempt->assertStatus(422);
+    }
+
+    // 6. Order Cancellation Rules
     public function test_customer_can_cancel_pending_order_but_cannot_cancel_preparing_order(): void
     {
         $address = CustomerAddress::create([
             'user_id' => $this->customer->id,
-            'street_address' => '123 Test St',
+            'street' => '123 Test St',
             'city' => 'Beverly Hills',
             'area' => 'Downtown',
             'is_default' => true,
@@ -223,14 +266,14 @@ class CustomerExperienceOrderingTest extends TestCase
             'customer_id' => $this->customer->id,
             'restaurant_id' => $this->restaurant->id,
             'order_number' => 'ORD-TEST-001',
-            'status' => 'pending',
+            'order_status' => 'pending',
             'payment_status' => 'pending',
             'subtotal' => 350.00,
             'delivery_fee' => 50.00,
             'tax' => 0.00,
             'discount' => 0.00,
-            'total_amount' => 400.00,
-            'delivery_address' => json_encode(['street' => '123 Test St']),
+            'grand_total' => 400.00,
+            'delivery_address_json' => json_encode(['street' => '123 Test St']),
         ]);
 
         // Customer cancels pending order -> allowed
@@ -239,21 +282,21 @@ class CustomerExperienceOrderingTest extends TestCase
                 'reason' => 'Changed my mind',
             ]);
         $cancelPending->assertStatus(200)
-            ->assertJsonPath('data.status', 'cancelled');
+            ->assertJsonPath('data.order_status', 'cancelled');
 
         // Order in preparing state cannot be cancelled by customer
         $order2 = Order::create([
             'customer_id' => $this->customer->id,
             'restaurant_id' => $this->restaurant->id,
             'order_number' => 'ORD-TEST-002',
-            'status' => 'preparing',
+            'order_status' => 'preparing',
             'payment_status' => 'paid',
             'subtotal' => 350.00,
             'delivery_fee' => 50.00,
             'tax' => 0.00,
             'discount' => 0.00,
-            'total_amount' => 400.00,
-            'delivery_address' => json_encode(['street' => '123 Test St']),
+            'grand_total' => 400.00,
+            'delivery_address_json' => json_encode(['street' => '123 Test St']),
         ]);
 
         $cancelPreparing = $this->actingAs($this->customer, 'sanctum')
@@ -263,19 +306,19 @@ class CustomerExperienceOrderingTest extends TestCase
         $cancelPreparing->assertStatus(422);
     }
 
-    // 6. Review & Rating Submission
+    // 7. Review & Rating Submission
     public function test_customer_can_only_review_completed_orders_they_own(): void
     {
         $deliveredOrder = Order::create([
             'customer_id' => $this->customer->id,
             'restaurant_id' => $this->restaurant->id,
             'order_number' => 'ORD-TEST-DELIVERED',
-            'status' => 'delivered',
+            'order_status' => 'delivered',
             'payment_status' => 'paid',
             'subtotal' => 350.00,
             'delivery_fee' => 50.00,
-            'total_amount' => 400.00,
-            'delivery_address' => json_encode(['street' => '123 Test St']),
+            'grand_total' => 400.00,
+            'delivery_address_json' => json_encode(['street' => '123 Test St']),
         ]);
 
         // Customer submits review for delivered order
@@ -283,6 +326,7 @@ class CustomerExperienceOrderingTest extends TestCase
             ->postJson('/api/v1/reviews', [
                 'order_id' => $deliveredOrder->id,
                 'rating' => 5,
+                'food_rating' => 5,
                 'comment' => 'Exceptional taste and prompt delivery!',
             ]);
         $reviewResponse->assertStatus(201)
@@ -294,29 +338,65 @@ class CustomerExperienceOrderingTest extends TestCase
             ->postJson('/api/v1/reviews', [
                 'order_id' => $deliveredOrder->id,
                 'rating' => 4,
+                'food_rating' => 4,
                 'comment' => 'Another review attempt',
             ]);
-        $dupReview->assertStatus(422);
+        $dupReview->assertStatus(409);
 
         // Other customer cannot review this order
         $otherOrder = Order::create([
             'customer_id' => $this->customer->id,
             'restaurant_id' => $this->restaurant->id,
             'order_number' => 'ORD-TEST-OTHER',
-            'status' => 'delivered',
+            'order_status' => 'delivered',
             'payment_status' => 'paid',
             'subtotal' => 350.00,
             'delivery_fee' => 50.00,
-            'total_amount' => 400.00,
-            'delivery_address' => json_encode(['street' => '123 Test St']),
+            'grand_total' => 400.00,
+            'delivery_address_json' => json_encode(['street' => '123 Test St']),
         ]);
 
         $unauthorizedReview = $this->actingAs($this->otherCustomer, 'sanctum')
             ->postJson('/api/v1/reviews', [
                 'order_id' => $otherOrder->id,
                 'rating' => 1,
+                'food_rating' => 1,
                 'comment' => 'Malicious fake review',
             ]);
         $unauthorizedReview->assertStatus(403);
+    }
+
+    // 8. Notifications Ownership & Read State
+    public function test_customer_can_only_access_and_update_own_notifications(): void
+    {
+        $myNotification = Notification::create([
+            'type' => 'order_status_updated',
+            'notifiable_type' => User::class,
+            'notifiable_id' => $this->customer->id,
+            'data' => ['title' => 'Order Accepted', 'message' => 'Kitchen has begun preparation'],
+        ]);
+
+        $otherNotification = Notification::create([
+            'type' => 'order_status_updated',
+            'notifiable_type' => User::class,
+            'notifiable_id' => $this->otherCustomer->id,
+            'data' => ['title' => 'Other Customer Order', 'message' => 'Private details'],
+        ]);
+
+        // List my notifications
+        $myList = $this->actingAs($this->customer, 'sanctum')
+            ->getJson('/api/v1/customer/notifications');
+        $myList->assertStatus(200)
+            ->assertJsonPath('data.unread_count', 1);
+
+        // Mark my notification as read
+        $markRead = $this->actingAs($this->customer, 'sanctum')
+            ->putJson("/api/v1/customer/notifications/{$myNotification->id}/read");
+        $markRead->assertStatus(200);
+
+        // Cannot mark another customer's notification as read (IDOR rejection)
+        $attackRead = $this->actingAs($this->customer, 'sanctum')
+            ->putJson("/api/v1/customer/notifications/{$otherNotification->id}/read");
+        $attackRead->assertStatus(404);
     }
 }
