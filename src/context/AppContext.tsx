@@ -1425,12 +1425,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await customerApi.markNotificationRead(id);
       if (res.success && res.data) {
         setNotifications((prev) =>
-          prev.map((n) => (n.id === id ? { ...n, read_at: res.data.read_at } : n))
+          prev.map((n) => (n.id === id ? { ...n, read_at: res.data.read_at ?? null } : n))
         );
       } else {
-        setNotifications((prev) =>
-          prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
-        );
+        // Sync authoritatively from backend without inventing timestamps
+        const notifRes = await customerApi.getNotifications();
+        if (notifRes.success && notifRes.data) {
+          setNotifications(notifRes.data.notifications || []);
+          setUnreadNotificationsCount(notifRes.data.unread_count || 0);
+          return;
+        }
       }
       setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
     } catch {
