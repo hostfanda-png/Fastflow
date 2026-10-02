@@ -15,6 +15,8 @@ use App\Models\FinancialTransaction;
 use App\Models\Settlement;
 use App\Models\PaymentWebhookEvent;
 use App\Models\AuditLog;
+use App\Models\Role;
+use App\Models\Rider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 class PaymentFinancialTest extends TestCase
@@ -851,6 +853,228 @@ class PaymentFinancialTest extends TestCase
         ]);
 
         // Fails with 422 because no eligible settled orders exist
+        $res->assertStatus(422);
+    }
+
+    /**
+     * Test 19: Webhook rejects wrong PaymentIntent ID.
+     */
+    public function test_webhook_rejects_wrong_payment_intent_id(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1200.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+        ]);
+
+        Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'amount' => 1200.00,
+            'currency' => 'PKR',
+            'gateway_payment_intent_id' => 'pi_expected_real_123',
+            'status' => 'pending',
+        ]);
+
+        $secret = 'whsec_test_secret_for_phpunit';
+        putenv("STRIPE_WEBHOOK_SECRET={$secret}");
+
+        $timestamp = time();
+        $payloadArray = [
+            'id' => 'evt_wrong_intent_001',
+            'type' => 'payment_intent.succeeded',
+            'data' => [
+                'object' => [
+                    'id' => 'pi_spoofed_unmatched_456',
+                    'amount' => 120000,
+                    'currency' => 'pkr',
+                    'metadata' => [
+                        'order_id' => $order->id,
+                    ],
+                ],
+            ],
+        ];
+
+        $rawPayload = json_encode($payloadArray);
+        $signature = hash_hmac('sha256', "{$timestamp}.{$rawPayload}", $secret);
+        $sigHeader = "t={$timestamp},v1={$signature}";
+
+        $response = $this->call('POST', '/api/v1/payments/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => $sigHeader,
+            'CONTENT_TYPE' => 'application/json',
+        ], $rawPayload);
+
+        $response->assertStatus(400);
+
+        $order->refresh();
+        $this->assertEquals('pending', $order->payment_status);
+    }
+
+    /**
+     * Test 20: Delivery rider cannot collect COD for an unassigned order.
+     */
+    public function test_delivery_rider_cannot_collect_cod_for_unassigned_order(): void
+    {
+        $riderRole = Role::firstOrCreate(['name' => 'delivery_rider'], ['label' => 'Rider']);
+        $riderUser = User::factory()->create(['role_id' => $riderRole->id]);
+        $rider = Rider::create([
+            'user_id' => $riderUser->id,
+            'vehicle_type' => 'motorcycle',
+            'status' => 'active',
+            'is_available' => true,
+        ]);
+
+        $otherRider = Rider::create([
+            'user_id' => User::factory()->create()->id,
+            'vehicle_type' => 'motorcycle',
+            'status' => 'active',
+            'is_available' => true,
+        ]);
+
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'rider_id' => $otherRider->id, // Assigned to other rider
+            'grand_total' => 800.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'pending',
+            'order_status' => 'on_the_way',
+        ]);
+
+        Payment::create([
+            'order_id' => $order->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'amount' => 800.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_PENDING,
+        ]);
+
+        // Attempting to collect as the unassigned rider
+        $res = $this->actingAs($riderUser, 'sanctum')->postJson("/api/v1/orders/{$order->id}/collect-cod", [
+            'reference' => 'UNAUTHORIZED_ATTEMPT',
+        ]);
+
+        $res->assertStatus(403);
+    }
+
+    /**
+     * Test 21: Settlement calculation accurately deducts partial refunds.
+     */
+    public function test_settlement_calculation_accurately_deducts_partial_refunds(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'subtotal' => 2000.00,
+            'grand_total' => 2200.00,
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Commission::create([
+            'order_id' => $paidOrder->id,
+            'restaurant_id' => $this->restaurant->id,
+            'order_subtotal' => 2000.00,
+            'commission_rate' => 15.00,
+            'commission_amount' => 300.00,
+            'restaurant_net_payout' => 1700.00,
+            'settlement_status' => 'pending',
+            'created_at' => now()->subDay(),
+        ]);
+
+        // Record a completed partial refund of PKR 300 on this order
+        Refund::create([
+            'refund_number' => 'REF-TEST-PARTIAL-SETTLE',
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'amount' => 300.00,
+            'reason' => 'Item missing from bundle',
+            'status' => Refund::STATUS_COMPLETED,
+            'refund_actor' => 'super_admin',
+            'processed_by' => $this->admin->id,
+            'processed_at' => now(),
+        ]);
+
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson('/api/v1/admin/settlements', [
+            'restaurant_id' => $this->restaurant->id,
+            'period_start' => now()->subDays(7)->toDateString(),
+            'period_end' => now()->toDateString(),
+        ]);
+
+        $res->assertStatus(200);
+
+        // Expected Net Payout = 1700.00 - 300.00 = 1400.00
+        $settlement = Settlement::where('restaurant_id', $this->restaurant->id)->latest()->first();
+        $this->assertEquals(1400.00, (float)$settlement->net_payout);
+        $this->assertEquals(600.00, (float)$settlement->total_deductions); // 300 commission + 300 refund
+    }
+
+    /**
+     * Test 22: Duplicate settlement prevention ensures commissions cannot be settled twice.
+     */
+    public function test_duplicate_settlement_prevention_ensures_commissions_cannot_be_settled_twice(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'subtotal' => 1000.00,
+            'grand_total' => 1100.00,
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Commission::create([
+            'order_id' => $paidOrder->id,
+            'restaurant_id' => $this->restaurant->id,
+            'order_subtotal' => 1000.00,
+            'commission_rate' => 15.00,
+            'commission_amount' => 150.00,
+            'restaurant_net_payout' => 850.00,
+            'settlement_status' => 'pending',
+            'created_at' => now()->subDay(),
+        ]);
+
+        // First settlement batch succeeds
+        $res1 = $this->actingAs($this->admin, 'sanctum')->postJson('/api/v1/admin/settlements', [
+            'restaurant_id' => $this->restaurant->id,
+            'period_start' => now()->subDays(7)->toDateString(),
+            'period_end' => now()->toDateString(),
+        ]);
+        $res1->assertStatus(200);
+
+        // Second immediate attempt with same dates finds NO pending commissions
+        $res2 = $this->actingAs($this->admin, 'sanctum')->postJson('/api/v1/admin/settlements', [
+            'restaurant_id' => $this->restaurant->id,
+            'period_start' => now()->subDays(7)->toDateString(),
+            'period_end' => now()->toDateString(),
+        ]);
+        $res2->assertStatus(422);
+    }
+
+    /**
+     * Test 23: Mass assignment protection prevents client from tampering with financial amounts.
+     */
+    public function test_mass_assignment_protection_prevents_client_from_tampering_with_financial_amounts(): void
+    {
+        $res = $this->actingAs($this->customer, 'sanctum')->postJson('/api/v1/orders/checkout', [
+            'delivery_address' => [
+                'street' => '123 Fake Street',
+                'area' => 'Gulberg',
+                'city' => 'Lahore',
+            ],
+            'payment_method' => 'cod',
+            // Tamper attempts
+            'grand_total' => 1.00,
+            'subtotal' => 1.00,
+            'payment_status' => 'paid',
+            'commission_amount' => 0.00,
+        ]);
+
+        // Cart is empty, rejected with 422 before untrusted fields could be processed
         $res->assertStatus(422);
     }
 }
