@@ -1978,14 +1978,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* TAB: Coupons & Vouchers */}
       {activeTab === 'coupons' && (
         <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
-              <h2 className="text-base font-bold text-stone-900">Promotions & Vouchers</h2>
-              <p className="text-xs text-stone-500">Create discount codes with min spend and expiration rules</p>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-stone-900">Promotions & Vouchers</h2>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                  Admin CRUD Planned for Phase 7
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 mt-0.5">Active discount promotions retrieved from backend public vouchers API (/api/v1/coupons)</p>
             </div>
             <button
               onClick={() => setShowCouponModal(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Create Coupon</span>
@@ -2167,8 +2172,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* TAB: Reviews Moderation */}
       {activeTab === 'reviews' && (
         <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
-          <h2 className="text-base font-bold text-stone-900 mb-1">Customer Reviews Moderation</h2>
-          <p className="text-xs text-stone-500 mb-6">Review authentic feedback before public display on restaurant pages</p>
+          <div className="flex items-center gap-2 mb-1">
+            <h2 className="text-base font-bold text-stone-900">Customer Reviews Moderation</h2>
+            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+              Admin Moderation Workflow Planned for Phase 7
+            </span>
+          </div>
+          <p className="text-xs text-stone-500 mb-6">Real diner reviews retrieved from backend public & customer reviews endpoints</p>
 
           <div className="space-y-3">
             {reviews.map((rev) => (
@@ -2357,8 +2367,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* TAB: CMS & Policies */}
       {activeTab === 'cms' && (
         <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
-          <h2 className="text-base font-bold text-stone-900 mb-1">Content Management System (CMS)</h2>
-          <p className="text-xs text-stone-500 mb-6">Edit marketplace legal agreements, refund terms, and FAQs</p>
+          <div className="flex items-center gap-2 mb-1">
+            <h2 className="text-base font-bold text-stone-900">Content Management System (CMS)</h2>
+            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+              CMS Publishing API Planned for Phase 7
+            </span>
+          </div>
+          <p className="text-xs text-stone-500 mb-6">Marketplace legal agreements, refund policies, terms, and FAQs</p>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="space-y-2">

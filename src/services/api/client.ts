@@ -36,7 +36,15 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    let base = this.baseUrl.replace(/\/+$/, '');
+    let path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    
+    // Prevent accidental duplicate prefix (e.g. /api/v1/api/v1/...)
+    if (base.endsWith('/api/v1') && path.startsWith('/api/v1/')) {
+      path = path.substring(7); // remove leading /api/v1
+    }
+
+    const url = `${base}${path}`;
     const token = this.getToken();
 
     const headers: Record<string, string> = {

@@ -35,54 +35,55 @@ export interface RouteState {
   rawPath: string;
 }
 
+/**
+ * Deterministic path parser with strict priority ordering:
+ * 1. Root & exact top-level storefront paths
+ * 2. Static portal routes (/restaurant-portal, /restaurant/portal, /rider-portal, /rider/portal)
+ * 3. Static CMS routes (/about, /faq, /terms, etc.)
+ * 4. Admin routes (/admin, /admin/:tab, /admin/:tab/:id)
+ * 5. Dynamic entity routes (/restaurant/:id, /restaurants/:id, /order-tracker/:id)
+ * 6. Fallback to not_found for unknown paths
+ */
 export function parsePath(pathname: string): RouteState {
   const cleanPath = pathname.replace(/\/+$/, '') || '/';
   const parts = cleanPath.split('/').filter(Boolean);
 
-  // Home / Storefront
+  // 1. Root / Storefront
   if (parts.length === 0 || cleanPath === '/' || cleanPath === '/storefront') {
     return { view: 'storefront', rawPath: cleanPath };
   }
 
-  // Restaurant details: /restaurant/:id or /restaurants/:id
-  if (parts[0] === 'restaurant' || parts[0] === 'restaurants') {
-    if (parts.length >= 2) {
-      return { view: 'restaurant_detail', restaurantId: parts[1], rawPath: cleanPath };
-    }
-    return { view: 'storefront', rawPath: cleanPath };
+  // 2. Static Portals (MUST evaluate before dynamic /restaurant/:id and /rider/:id)
+  if (
+    cleanPath === '/restaurant-portal' || 
+    (parts[0] === 'restaurant' && parts[1] === 'portal') ||
+    (parts[0] === 'restaurants' && parts[1] === 'portal')
+  ) {
+    return { view: 'restaurant_portal', rawPath: cleanPath };
   }
 
-  // Offers: /offers or /coupons
+  if (
+    cleanPath === '/rider-portal' || 
+    (parts[0] === 'rider' && parts[1] === 'portal') ||
+    (parts[0] === 'riders' && parts[1] === 'portal')
+  ) {
+    return { view: 'rider_portal', rawPath: cleanPath };
+  }
+
+  // 3. Static Customer Views
   if (parts[0] === 'offers' || parts[0] === 'coupons') {
     return { view: 'offers', rawPath: cleanPath };
   }
 
-  // Customer orders: /orders
-  if (parts[0] === 'orders') {
+  if (parts[0] === 'orders' && parts.length === 1) {
     return { view: 'orders', rawPath: cleanPath };
   }
 
-  // Order tracking: /order-tracker or /order-tracker/:id
-  if (parts[0] === 'order-tracker' || parts[0] === 'tracker') {
-    return { view: 'order_tracker', orderId: parts[1], rawPath: cleanPath };
-  }
-
-  // Profile: /profile
   if (parts[0] === 'profile') {
     return { view: 'profile', rawPath: cleanPath };
   }
 
-  // Restaurant Owner / Staff Portal: /restaurant-portal or /restaurant/portal
-  if (parts[0] === 'restaurant-portal' || (parts[0] === 'restaurant' && parts[1] === 'portal')) {
-    return { view: 'restaurant_portal', rawPath: cleanPath };
-  }
-
-  // Rider Portal: /rider-portal or /rider/portal
-  if (parts[0] === 'rider-portal' || (parts[0] === 'rider' && parts[1] === 'portal')) {
-    return { view: 'rider_portal', rawPath: cleanPath };
-  }
-
-  // CMS Static Pages
+  // 4. Static CMS Pages
   if (parts[0] === 'about' || parts[0] === 'about-us') {
     return { view: 'storefront', cmsSlug: 'about-us', rawPath: cleanPath };
   }
@@ -99,7 +100,7 @@ export function parsePath(pathname: string): RouteState {
     return { view: 'storefront', cmsSlug: 'refund-policy', rawPath: cleanPath };
   }
 
-  // Admin Routes: /admin or /admin/...
+  // 5. Admin Governance Routes
   if (parts[0] === 'admin') {
     const sub = parts[1] || 'dashboard';
 
@@ -164,14 +165,25 @@ export function parsePath(pathname: string): RouteState {
       return { view: 'admin_portal', adminTab: 'settings', rawPath: cleanPath };
     }
 
-    // Unknown admin sub-route
+    // Unknown admin sub-path
     return {
       view: 'not_found',
       rawPath: cleanPath,
     };
   }
 
-  // Any other unknown path
+  // 6. Dynamic Order Tracking (/order-tracker or /order-tracker/:id)
+  if (parts[0] === 'order-tracker' || parts[0] === 'tracker') {
+    return { view: 'order_tracker', orderId: parts[1], rawPath: cleanPath };
+  }
+
+  // 7. Dynamic Restaurant Detail (/restaurant/:id or /restaurants/:id)
+  if ((parts[0] === 'restaurant' || parts[0] === 'restaurants') && parts.length >= 2) {
+    // Guaranteed not to be 'portal' because portal matched in rule 2
+    return { view: 'restaurant_detail', restaurantId: parts[1], rawPath: cleanPath };
+  }
+
+  // 8. Fallback 404 for unknown routes
   return {
     view: 'not_found',
     rawPath: cleanPath,
