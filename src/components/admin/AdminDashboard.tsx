@@ -25,7 +25,19 @@ import {
   Users
 } from 'lucide-react';
 
-export const AdminDashboard: React.FC = () => {
+export interface AdminDashboardProps {
+  initialTab?: 'analytics' | 'restaurants' | 'riders' | 'orders' | 'customers' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings';
+  detailType?: 'restaurant' | 'order' | 'customer' | 'rider';
+  detailId?: string | number;
+  onTabChange?: (tab: string, detailId?: string | number) => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({
+  initialTab = 'analytics',
+  detailType,
+  detailId,
+  onTabChange,
+}) => {
   const { 
     currentUser, 
     restaurants, 
@@ -58,7 +70,7 @@ export const AdminDashboard: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<
     'analytics' | 'restaurants' | 'riders' | 'orders' | 'customers' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings'
-  >('analytics');
+  >(initialTab);
 
   // Backend-authoritative Dashboard Metrics
   const [metrics, setMetrics] = useState<AdminDashboardMetrics | null>(null);
@@ -69,6 +81,10 @@ export const AdminDashboard: React.FC = () => {
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerStatusFilter, setCustomerStatusFilter] = useState('all');
   const [customersLoading, setCustomersLoading] = useState(false);
+  const [inspectingCustomer, setInspectingCustomer] = useState<any | null>(null);
+
+  // Rider Inspection State
+  const [inspectingRider, setInspectingRider] = useState<any | null>(null);
 
   // Restaurant Management States (Phase 6 Authoritative)
   const [adminRestaurants, setAdminRestaurants] = useState<any[]>([]);
@@ -290,15 +306,33 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (detailType && detailId) {
+      if (detailType === 'restaurant') handleInspectRestaurant(detailId);
+      else if (detailType === 'order') handleInspectOrder(detailId);
+      else if (detailType === 'customer') handleInspectCustomer(detailId);
+      else if (detailType === 'rider') handleInspectRider(detailId);
+    }
+  }, [detailType, detailId]);
+
   const handleInspectRestaurant = async (id: number | string) => {
     setInspectingRestLoading(true);
     try {
       const res = await adminApi.getRestaurant(id);
       if (res.success && res.data) {
         setInspectingRestaurant(res.data);
+        if (onTabChange) onTabChange('restaurants', id);
+      } else {
+        showToast(res.message || 'Restaurant record not found', 'error');
       }
     } catch {
-      showToast('Failed to load restaurant details', 'error');
+      showToast('Failed to load restaurant details (404 / error)', 'error');
     } finally {
       setInspectingRestLoading(false);
     }
@@ -309,9 +343,40 @@ export const AdminDashboard: React.FC = () => {
       const res = await adminApi.getOrder(orderId);
       if (res.success && res.data) {
         setInspectingOrder(res.data);
+        if (onTabChange) onTabChange('orders', orderId);
+      } else {
+        showToast(res.message || 'Order record not found', 'error');
       }
     } catch {
-      showToast('Failed to load order snapshot', 'error');
+      showToast('Failed to load order snapshot (404 / error)', 'error');
+    }
+  };
+
+  const handleInspectCustomer = async (id: number | string) => {
+    try {
+      const res = await adminApi.getCustomer(id);
+      if (res.success && res.data) {
+        setInspectingCustomer(res.data);
+        if (onTabChange) onTabChange('customers', id);
+      } else {
+        showToast(res.message || 'Customer record not found', 'error');
+      }
+    } catch {
+      showToast('Failed to load customer details (404 / error)', 'error');
+    }
+  };
+
+  const handleInspectRider = async (id: number | string) => {
+    try {
+      const res = await adminApi.getRider(id);
+      if (res.success && res.data) {
+        setInspectingRider(res.data);
+        if (onTabChange) onTabChange('riders', id);
+      } else {
+        showToast(res.message || 'Courier record not found', 'error');
+      }
+    } catch {
+      showToast('Failed to load courier details (404 / error)', 'error');
     }
   };
 
@@ -656,7 +721,10 @@ export const AdminDashboard: React.FC = () => {
         ].map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => {
+              setActiveTab(tab.id as any);
+              if (onTabChange) onTabChange(tab.id as any);
+            }}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               activeTab === tab.id
                 ? 'bg-stone-900 text-white shadow-xs'
@@ -1008,7 +1076,10 @@ export const AdminDashboard: React.FC = () => {
 
                 <div className="mt-6 flex justify-end">
                   <button
-                    onClick={() => setInspectingRestaurant(null)}
+                    onClick={() => {
+                      setInspectingRestaurant(null);
+                      if (onTabChange) onTabChange('restaurants');
+                    }}
                     className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold"
                   >
                     Close
@@ -1135,19 +1206,26 @@ export const AdminDashboard: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between gap-1 pt-3 border-t border-stone-200 text-[11px]">
+                    <button
+                      onClick={() => handleInspectRider(r.id)}
+                      className="text-stone-700 font-semibold hover:text-stone-900 bg-stone-100 hover:bg-stone-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Details
+                    </button>
+
                     {isSuspended ? (
                       <button
                         onClick={() => handleUpdateRiderStatus(r.id, 'available')}
                         className="text-emerald-700 font-bold hover:underline cursor-pointer"
                       >
-                        Activate Driver
+                        Activate
                       </button>
                     ) : (
                       <button
                         onClick={() => handleUpdateRiderStatus(r.id, 'suspended')}
                         className="text-amber-700 font-semibold hover:underline cursor-pointer"
                       >
-                        Suspend Driver
+                        Suspend
                       </button>
                     )}
 
@@ -1155,7 +1233,7 @@ export const AdminDashboard: React.FC = () => {
                       onClick={() => handleDeactivateRider(r.id)}
                       className="text-red-600 font-semibold hover:underline cursor-pointer"
                     >
-                      Archive Driver
+                      Archive
                     </button>
                   </div>
                 </div>
@@ -1400,6 +1478,105 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           )}
+          {/* Rider Details Modal */}
+          {inspectingRider && (
+            <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 max-h-[85vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-200 mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-800 font-bold text-sm">
+                      <Bike className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-stone-900">{inspectingRider.rider?.name}</h3>
+                      <p className="text-xs text-stone-500">{inspectingRider.rider?.email} · {inspectingRider.rider?.phone || 'No phone'}</p>
+                    </div>
+                  </div>
+                  <span className={`text-xs font-bold uppercase px-2.5 py-1 rounded-full ${
+                    inspectingRider.rider?.status === 'available' ? 'bg-emerald-100 text-emerald-800' :
+                    inspectingRider.rider?.status === 'suspended' ? 'bg-red-100 text-red-800' :
+                    'bg-amber-100 text-amber-800'
+                  }`}>
+                    {inspectingRider.rider?.status || 'available'}
+                  </span>
+                </div>
+
+                <div className="space-y-4 text-xs">
+                  <div>
+                    <h4 className="font-bold text-stone-900 mb-1">Vehicle & Courier Profile</h4>
+                    <div className="p-3 bg-stone-50 rounded-xl space-y-1 text-stone-700">
+                      <div>Vehicle: <strong>{inspectingRider.rider?.vehicle_type}</strong> (<span className="font-mono">{inspectingRider.rider?.vehicle_number}</span>)</div>
+                      <div>Rating: <strong className="text-amber-600">{inspectingRider.rider?.rating} ★</strong></div>
+                      <div>Fee Per Delivery: <strong className="font-mono">{formatCurrency(Number(inspectingRider.rider?.commission_per_delivery || 100))}</strong></div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-stone-900 mb-1">Performance & Earnings</h4>
+                    <div className="grid grid-cols-3 gap-2 text-center p-3 bg-stone-50 rounded-xl">
+                      <div>
+                        <div className="text-[10px] text-stone-400">Total Deliveries</div>
+                        <div className="font-bold text-stone-900 font-mono">{inspectingRider.rider?.total_deliveries ?? 0}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-stone-400">Today Earnings</div>
+                        <div className="font-bold text-emerald-600 font-mono">{formatCurrency(Number(inspectingRider.rider?.today_earnings ?? 0))}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-stone-400">Lifetime Earnings</div>
+                        <div className="font-bold text-stone-900 font-mono">{formatCurrency(Number(inspectingRider.rider?.total_earnings ?? 0))}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(inspectingRider.active_orders) && inspectingRider.active_orders.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-stone-900 mb-1">Active Deliveries In-Route</h4>
+                      <div className="space-y-1.5">
+                        {inspectingRider.active_orders.map((ord: any) => (
+                          <div key={ord.id} className="p-2 bg-amber-50/60 border border-amber-200 rounded-lg flex justify-between items-center text-xs">
+                            <div>
+                              <span className="font-mono font-bold text-stone-900">{ord.order_number}</span>
+                              <div className="text-[10px] text-stone-600">{ord.restaurant?.name || 'Restaurant'}</div>
+                            </div>
+                            <span className="text-[10px] uppercase font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                              {String(ord.order_status).replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(inspectingRider.recent_orders) && inspectingRider.recent_orders.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-stone-900 mb-1">Recent Delivery History</h4>
+                      <div className="divide-y divide-stone-100 border border-stone-200 rounded-xl overflow-hidden max-h-36 overflow-y-auto">
+                        {inspectingRider.recent_orders.map((ord: any) => (
+                          <div key={ord.id} className="p-2 flex justify-between items-center text-xs">
+                            <span className="font-mono font-semibold">{ord.order_number}</span>
+                            <span className="text-[10px] uppercase text-stone-500">{String(ord.order_status).replace(/_/g, ' ')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={() => {
+                      setInspectingRider(null);
+                      if (onTabChange) onTabChange('riders');
+                    }}
+                    className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1584,7 +1761,10 @@ export const AdminDashboard: React.FC = () => {
 
                 <div className="mt-6 flex justify-end">
                   <button
-                    onClick={() => setInspectingOrder(null)}
+                    onClick={() => {
+                      setInspectingOrder(null);
+                      if (onTabChange) onTabChange('orders');
+                    }}
                     className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold"
                   >
                     Close
@@ -1688,14 +1868,20 @@ export const AdminDashboard: React.FC = () => {
                             {cust.status}
                           </span>
                         </td>
-                        <td className="py-3 px-3">
+                        <td className="py-3 px-3 flex items-center gap-2">
+                          <button
+                            onClick={() => handleInspectCustomer(cust.id)}
+                            className="text-xs font-semibold text-stone-700 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                          >
+                            Details
+                          </button>
                           <button
                             onClick={handleToggleStatus}
-                            className={`text-xs font-semibold hover:underline ${
+                            className={`text-xs font-semibold hover:underline cursor-pointer ${
                               isActive ? 'text-red-600' : 'text-emerald-700'
                             }`}
                           >
-                            {isActive ? 'Deactivate' : 'Activate Account'}
+                            {isActive ? 'Deactivate' : 'Activate'}
                           </button>
                         </td>
                       </tr>
@@ -1703,6 +1889,87 @@ export const AdminDashboard: React.FC = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Customer Details Modal */}
+          {inspectingCustomer && (
+            <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 max-h-[85vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-200 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-stone-900">{inspectingCustomer.customer?.name}</h3>
+                    <p className="text-xs text-stone-500">{inspectingCustomer.customer?.email} · {inspectingCustomer.customer?.phone || 'No phone'}</p>
+                  </div>
+                  <span className={`text-xs font-bold uppercase px-2.5 py-1 rounded-full ${
+                    inspectingCustomer.customer?.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-700'
+                  }`}>
+                    {inspectingCustomer.customer?.status || 'active'}
+                  </span>
+                </div>
+
+                <div className="space-y-4 text-xs">
+                  <div>
+                    <h4 className="font-bold text-stone-900 mb-1">Customer Overview</h4>
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-stone-50 rounded-xl">
+                      <div>
+                        <div className="text-[10px] text-stone-400">Total Lifetime Spend</div>
+                        <div className="font-bold text-emerald-600 font-mono text-sm">{formatCurrency(Number(inspectingCustomer.stats?.total_spent ?? 0))}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-stone-400">Total Orders Placed</div>
+                        <div className="font-bold text-stone-900 font-mono text-sm">{inspectingCustomer.stats?.total_orders ?? 0} orders</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(inspectingCustomer.addresses) && inspectingCustomer.addresses.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-stone-900 mb-1">Saved Addresses ({inspectingCustomer.addresses.length})</h4>
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                        {inspectingCustomer.addresses.map((addr: any, idx: number) => (
+                          <div key={idx} className="p-2 bg-stone-50 rounded-lg border border-stone-200/60 text-[11px]">
+                            <div className="font-semibold text-stone-900">{addr.label || 'Address'} {addr.is_default ? '(Default)' : ''}</div>
+                            <div className="text-stone-600">{addr.street}, {addr.area}, {addr.city}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(inspectingCustomer.recent_orders) && inspectingCustomer.recent_orders.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-stone-900 mb-1">Recent Orders</h4>
+                      <div className="divide-y divide-stone-100 border border-stone-200 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
+                        {inspectingCustomer.recent_orders.map((ord: any) => (
+                          <div key={ord.id} className="p-2.5 flex justify-between items-center text-xs">
+                            <div>
+                              <div className="font-mono font-bold text-stone-900">{ord.order_number}</div>
+                              <div className="text-[10px] text-stone-400">{ord.restaurant?.name || 'Restaurant'}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-mono font-bold text-stone-900">{formatCurrency(Number(ord.grand_total))}</div>
+                              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 font-semibold">{String(ord.order_status).replace(/_/g, ' ')}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={() => {
+                      setInspectingCustomer(null);
+                      if (onTabChange) onTabChange('customers');
+                    }}
+                    className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

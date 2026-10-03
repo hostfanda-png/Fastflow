@@ -16,12 +16,14 @@ interface HeaderProps {
   setActiveView: (view: string) => void;
   onOpenCart: () => void;
   onOpenSearch?: () => void;
+  onOpenCMS?: (slug: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
   activeView, 
   setActiveView, 
-  onOpenCart 
+  onOpenCart,
+  onOpenCMS,
 }) => {
   const { 
     currentUser, 
@@ -127,13 +129,13 @@ export const Header: React.FC<HeaderProps> = ({
               My Orders
             </button>
             <button 
-              onClick={() => setActiveView('about-us')}
+              onClick={() => onOpenCMS ? onOpenCMS('about-us') : setActiveView('about-us')}
               className={`hover:text-stone-900 transition-colors ${activeView === 'about-us' ? 'text-amber-600 font-semibold' : ''}`}
             >
               About
             </button>
             <button 
-              onClick={() => setActiveView('faq')}
+              onClick={() => onOpenCMS ? onOpenCMS('faq') : setActiveView('faq')}
               className={`hover:text-stone-900 transition-colors ${activeView === 'faq' ? 'text-amber-600 font-semibold' : ''}`}
             >
               Help & FAQ
@@ -282,13 +284,21 @@ export const Header: React.FC<HeaderProps> = ({
             Customer Profile & Addresses
           </button>
           <button 
-            onClick={() => { setActiveView('about-us'); setMobileMenuOpen(false); }}
+            onClick={() => { 
+              if (onOpenCMS) onOpenCMS('about-us'); 
+              else setActiveView('about-us'); 
+              setMobileMenuOpen(false); 
+            }}
             className="block w-full text-left py-2 text-sm font-medium text-stone-800"
           >
             About Fastflow
           </button>
           <button 
-            onClick={() => { setActiveView('faq'); setMobileMenuOpen(false); }}
+            onClick={() => { 
+              if (onOpenCMS) onOpenCMS('faq'); 
+              else setActiveView('faq'); 
+              setMobileMenuOpen(false); 
+            }}
             className="block w-full text-left py-2 text-sm font-medium text-stone-800"
           >
             FAQ & Support

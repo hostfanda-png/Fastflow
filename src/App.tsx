@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
@@ -17,6 +17,7 @@ import { AuthModal } from './components/common/AuthModal';
 import { RestaurantDashboard } from './components/restaurant/RestaurantDashboard';
 import { RiderDashboard } from './components/rider/RiderDashboard';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { NotFoundView } from './components/common/NotFoundView';
 import { Restaurant } from './types';
 import { 
   Sparkles, 
@@ -27,14 +28,19 @@ import {
   Smartphone, 
   Star,
   CheckCircle,
-  Tag
+  Tag,
+  ShieldAlert
 } from 'lucide-react';
 import { SkeletonLoader } from './components/common/SkeletonLoader';
 import { ApiErrorMessage } from './components/common/ApiErrorMessage';
 import { LoadingSpinner } from './components/common/LoadingSpinner';
+import { parsePath, formatAdminPath, navigateTo, AppView, AdminTab } from './utils/router';
+import { restaurantApi } from './services/api/restaurantApi';
 
 const MainApp: React.FC = () => {
   const { 
+    currentUser,
+    isLoggedIn,
     restaurants, 
     products, 
     coupons, 
@@ -48,16 +54,116 @@ const MainApp: React.FC = () => {
     refreshData,
     isAuthModalOpen,
     closeAuthModal,
+    openAuthModal,
     authModalMode
   } = useApp();
 
-  const [activeView, setActiveView] = useState<string>('storefront');
+  const [activeView, setActiveView] = useState<AppView>('storefront');
+  const [adminTab, setAdminTab] = useState<AdminTab>('analytics');
+  const [adminDetailType, setAdminDetailType] = useState<'restaurant' | 'order' | 'customer' | 'rider' | undefined>(undefined);
+  const [adminDetailId, setAdminDetailId] = useState<string | number | undefined>(undefined);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('cat-all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [activeCMSPage, setActiveCMSPage] = useState<string | null>(null);
+  const [currentPath, setCurrentPath] = useState<string>(typeof window !== 'undefined' ? window.location.pathname : '/');
+
+  // Parse path and synchronize view state
+  const syncRouteFromPath = (pathname: string) => {
+    setCurrentPath(pathname);
+    const route = parsePath(pathname);
+
+    setActiveView(route.view);
+
+    if (route.cmsSlug) {
+      setActiveCMSPage(route.cmsSlug);
+    }
+
+    if (route.view === 'admin_portal') {
+      if (route.adminTab) {
+        setAdminTab(route.adminTab);
+      }
+      setAdminDetailType(route.detailType);
+      setAdminDetailId(route.detailId);
+    }
+
+    if (route.view === 'restaurant_detail' && route.restaurantId) {
+      const found = restaurants.find(r => String(r.id) === String(route.restaurantId));
+      if (found) {
+        setSelectedRestaurant(found);
+      } else {
+        // Fetch restaurant details dynamically if not in initial list
+        restaurantApi.getById(route.restaurantId)
+          .then((res) => {
+            if (res.data) setSelectedRestaurant(res.data);
+          })
+          .catch(() => {
+            // Handled gracefully
+          });
+      }
+    }
+
+    if (route.view === 'order_tracker' && route.orderId) {
+      const found = orders.find(o => String(o.id) === String(route.orderId) || o.orderNumber === route.orderId);
+      if (found) {
+        setActiveOrder(found);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      syncRouteFromPath(window.location.pathname);
+
+      const handlePopState = () => {
+        syncRouteFromPath(window.location.pathname);
+      };
+
+      window.addEventListener('popstate', handlePopState);
+      return () => window.removeEventListener('popstate', handlePopState);
+    }
+  }, [restaurants.length]);
+
+  // View transition helper
+  const changeView = (view: AppView, path?: string) => {
+    setActiveView(view);
+    if (view === 'storefront') setSelectedRestaurant(null);
+
+    const targetPath = path || (
+      view === 'storefront' ? '/' :
+      view === 'offers' ? '/offers' :
+      view === 'orders' ? '/orders' :
+      view === 'profile' ? '/profile' :
+      view === 'restaurant_portal' ? '/restaurant-portal' :
+      view === 'rider_portal' ? '/rider-portal' :
+      view === 'admin_portal' ? '/admin/dashboard' :
+      '/'
+    );
+
+    navigateTo(targetPath);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenRestaurant = (restaurant: Restaurant) => {
+    setSelectedRestaurant(restaurant);
+    setActiveView('restaurant_detail');
+    navigateTo(`/restaurants/${restaurant.id}`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOrderSuccess = (orderId: string) => {
+    setIsCheckoutOpen(false);
+    setActiveView('order_tracker');
+    navigateTo(`/order-tracker/${orderId}`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenCMS = (slug: string) => {
+    setActiveCMSPage(slug);
+    navigateTo(`/${slug}`);
+  };
 
   // Filter restaurants by category, search query
   const filteredRestaurants = restaurants.filter((r) => {
@@ -77,30 +183,15 @@ const MainApp: React.FC = () => {
     return matchesSearch && matchesCategory;
   });
 
-  const handleOpenRestaurant = (restaurant: Restaurant) => {
-    setSelectedRestaurant(restaurant);
-    setActiveView('restaurant_detail');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleOrderSuccess = (orderId: string) => {
-    setIsCheckoutOpen(false);
-    setActiveView('order_tracker');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col font-sans antialiased text-stone-900 selection:bg-amber-100 selection:text-amber-900">
       
       {/* Top Navigation */}
       <Header
         activeView={activeView}
-        setActiveView={(view) => {
-          setActiveView(view);
-          if (view === 'storefront') setSelectedRestaurant(null);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
+        setActiveView={(view) => changeView(view as AppView)}
         onOpenCart={() => setIsCartOpen(true)}
+        onOpenCMS={handleOpenCMS}
       />
 
       {/* Main Content Area */}
@@ -217,7 +308,7 @@ const MainApp: React.FC = () => {
                   <p className="text-xs text-stone-500 mt-1">Try clearing filters or search terms.</p>
                   <button
                     onClick={() => { setSearchQuery(''); setSelectedCategory('cat-all'); }}
-                    className="mt-4 px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-semibold"
+                    className="mt-4 px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
                   >
                     Reset Search
                   </button>
@@ -328,15 +419,23 @@ const MainApp: React.FC = () => {
         )}
 
         {/* VIEW 2: Restaurant Detail Page */}
-        {activeView === 'restaurant_detail' && selectedRestaurant && (
-          <RestaurantDetail
-            restaurant={selectedRestaurant}
-            onBack={() => {
-              setSelectedRestaurant(null);
-              setActiveView('storefront');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          />
+        {activeView === 'restaurant_detail' && (
+          selectedRestaurant ? (
+            <RestaurantDetail
+              restaurant={selectedRestaurant}
+              onBack={() => {
+                setSelectedRestaurant(null);
+                changeView('storefront', '/');
+              }}
+            />
+          ) : (
+            <NotFoundView
+              type="frontend_404"
+              path={currentPath}
+              message="The requested restaurant could not be located or may have been updated."
+              onNavigateHome={() => changeView('storefront', '/')}
+            />
+          )
         )}
 
         {/* VIEW 3: Special Offers */}
@@ -370,7 +469,7 @@ const MainApp: React.FC = () => {
                       navigator.clipboard?.writeText(c.code);
                       setIsCartOpen(true);
                     }}
-                    className="mt-4 w-full py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition-colors"
+                    className="mt-4 w-full py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
                   >
                     Apply in Bag
                   </button>
@@ -387,9 +486,10 @@ const MainApp: React.FC = () => {
               const found = orders.find(o => o.id === ordId);
               if (found) setActiveOrder(found);
               setActiveView('order_tracker');
+              navigateTo(`/order-tracker/${ordId}`);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            onExplore={() => setActiveView('storefront')}
+            onExplore={() => changeView('storefront', '/')}
           />
         )}
 
@@ -397,7 +497,7 @@ const MainApp: React.FC = () => {
         {activeView === 'order_tracker' && (
           <OrderTracker
             orderId={activeOrder?.id}
-            onBack={() => setActiveView('storefront')}
+            onBack={() => changeView('storefront', '/')}
           />
         )}
 
@@ -411,7 +511,70 @@ const MainApp: React.FC = () => {
         {activeView === 'rider_portal' && <RiderDashboard />}
 
         {/* VIEW 9: Super Admin Console */}
-        {activeView === 'admin_portal' && <AdminDashboard />}
+        {activeView === 'admin_portal' && (
+          currentUser?.role === 'super_admin' ? (
+            <AdminDashboard
+              initialTab={adminTab}
+              detailType={adminDetailType}
+              detailId={adminDetailId}
+              onTabChange={(tab, id) => {
+                setAdminTab(tab as any);
+                if (id) {
+                  setAdminDetailId(id);
+                } else {
+                  setAdminDetailId(undefined);
+                  setAdminDetailType(undefined);
+                }
+                navigateTo(formatAdminPath(tab as any, id));
+              }}
+            />
+          ) : !isLoggedIn ? (
+            <div className="max-w-md mx-auto my-16 bg-white rounded-3xl border border-stone-200 p-8 text-center shadow-lg">
+              <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center mx-auto mb-4">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-extrabold text-stone-900 tracking-tight">
+                Super Admin Authentication
+              </h2>
+              <p className="text-xs text-stone-500 mt-2 leading-relaxed">
+                The Master Governance Console is strictly restricted to authenticated platform super administrators. Please sign in with your administrator credentials.
+              </p>
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => openAuthModal('login')}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  Sign In as Admin
+                </button>
+                <button
+                  onClick={() => changeView('storefront', '/')}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Back to Storefront
+                </button>
+              </div>
+            </div>
+          ) : (
+            <NotFoundView
+              type="auth_403"
+              path={currentPath}
+              message={`Logged in as ${currentUser?.name || 'User'} (${currentUser?.role || 'user'}). This account does not possess Super Administrator privileges to access platform governance.`}
+              onNavigateHome={() => changeView('storefront', '/')}
+            />
+          )
+        )}
+
+        {/* VIEW 10: 404 Not Found */}
+        {activeView === 'not_found' && (
+          <NotFoundView
+            type="frontend_404"
+            path={currentPath}
+            onNavigateHome={() => changeView('storefront', '/')}
+            onNavigateAdmin={() => {
+              changeView('admin_portal', '/admin/dashboard');
+            }}
+          />
+        )}
 
       </main>
 
@@ -433,7 +596,12 @@ const MainApp: React.FC = () => {
       {activeCMSPage && (
         <CMSModal
           slug={activeCMSPage}
-          onClose={() => setActiveCMSPage(null)}
+          onClose={() => {
+            setActiveCMSPage(null);
+            if (['/about-us', '/about', '/faq', '/help', '/terms', '/privacy', '/refund-policy'].includes(window.location.pathname)) {
+              navigateTo('/');
+            }
+          }}
         />
       )}
 
@@ -446,11 +614,8 @@ const MainApp: React.FC = () => {
 
       {/* Footer */}
       <Footer
-        onOpenCMS={(slug) => setActiveCMSPage(slug)}
-        setActiveView={(view) => {
-          setActiveView(view);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
+        onOpenCMS={handleOpenCMS}
+        setActiveView={(view) => changeView(view as AppView)}
       />
 
       {/* Transient Alerts / Toasts */}
