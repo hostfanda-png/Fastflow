@@ -170,6 +170,14 @@ export const adminApi = {
     return apiClient.post(`/admin/orders/${orderId}/auto-dispatch`);
   },
 
+  refundOrder: async (orderId: string | number, payload: { amount: number; reason: string }): Promise<ApiResponse<any>> => {
+    return apiClient.post(`/admin/orders/${orderId}/refund`, payload);
+  },
+
+  collectCod: async (orderId: string | number, payload?: { reference?: string }): Promise<ApiResponse<any>> => {
+    return apiClient.post(`/admin/orders/${orderId}/collect-cod`, payload || {});
+  },
+
   getFinancials: async (): Promise<ApiResponse<any[]>> => {
     return apiClient.get('/admin/financials');
   },

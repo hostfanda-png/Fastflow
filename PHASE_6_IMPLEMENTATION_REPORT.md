@@ -81,8 +81,8 @@ To maintain strict technical accuracy:
 | **Assign Rider** | `adminApi.assignRider(id, riderId)` | `POST /api/v1/admin/orders/{order}/assign-rider` | `AdminController@assignRider` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
 | **Unassign Rider** | `adminApi.unassignRider(id)` | `POST /api/v1/admin/orders/{order}/unassign-rider` | `AdminController@unassignRider` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
 | **Auto-Dispatch** | `adminApi.autoDispatch(id)` | `POST /api/v1/admin/orders/{order}/auto-dispatch` | `AdminController@autoDispatch` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
-| **Refund Order** | `PaymentController@refund` | `POST /api/v1/admin/orders/{order}/refund` | `PaymentController@refund` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
-| **Collect COD** | `PaymentController@collectCod` | `POST /api/v1/admin/orders/{order}/collect-cod` | `PaymentController@collectCod` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
+| **Refund Order** | `adminApi.refundOrder(id, payload)` | `POST /api/v1/admin/orders/{order}/refund` | `PaymentController@refund` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
+| **Collect COD** | `adminApi.collectCod(id, payload)` | `POST /api/v1/admin/orders/{order}/collect-cod` | `PaymentController@collectCod` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
 | **Customers List** | `/admin/customers`<br>`adminApi.getCustomers()` | `GET /api/v1/admin/customers` | `AdminController@getCustomers` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
 | **Customer Detail** | `/admin/customers/{id}`<br>`adminApi.getCustomer(id)` | `GET /api/v1/admin/customers/{customer}` | `AdminController@showCustomer` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |
 | **Customer Status** | `adminApi.setCustomerStatus(id, status)` | `PUT /api/v1/admin/customers/{customer}/status` | `AdminController@setCustomerStatus` | `auth:sanctum`<br>`role:super_admin` | **SOURCE VERIFIED** |

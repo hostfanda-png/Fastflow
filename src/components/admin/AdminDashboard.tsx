@@ -122,6 +122,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('all');
   const [inspectingOrder, setInspectingOrder] = useState<any | null>(null);
+  const [isRefunding, setIsRefunding] = useState(false);
+  const [isCollectingCod, setIsCollectingCod] = useState(false);
 
   // Rider Management Modal States
   const [showRiderModal, setShowRiderModal] = useState(false);
@@ -349,6 +351,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     } catch {
       showToast('Failed to load order snapshot (404 / error)', 'error');
+    }
+  };
+
+  const handleRefundOrder = async (orderId: number | string, grandTotal: number) => {
+    const reason = window.prompt(`Enter refund reason for Order #${orderId}:`, 'Super Admin authorized refund');
+    if (!reason) return;
+    const amountStr = window.prompt(`Enter refund amount (Max: ${grandTotal}):`, String(grandTotal));
+    if (!amountStr) return;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0 || amount > grandTotal) {
+      showToast('Invalid refund amount specified', 'error');
+      return;
+    }
+
+    setIsRefunding(true);
+    try {
+      const res = await adminApi.refundOrder(orderId, { amount, reason });
+      if (res.success) {
+        showToast('Refund processed successfully', 'success');
+        handleInspectOrder(orderId);
+        fetchAdminOrders();
+        fetchDashboardMetrics();
+      } else {
+        showToast(res.message || 'Refund failed', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to process refund', 'error');
+    } finally {
+      setIsRefunding(false);
+    }
+  };
+
+  const handleCollectCod = async (orderId: number | string) => {
+    if (!window.confirm(`Confirm collection of Cash on Delivery payment for Order #${orderId}?`)) return;
+
+    setIsCollectingCod(true);
+    try {
+      const res = await adminApi.collectCod(orderId);
+      if (res.success) {
+        showToast('Cash payment recorded as collected', 'success');
+        handleInspectOrder(orderId);
+        fetchAdminOrders();
+        fetchDashboardMetrics();
+      } else {
+        showToast(res.message || 'Failed to record cash collection', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to record COD payment', 'error');
+    } finally {
+      setIsCollectingCod(false);
     }
   };
 
@@ -1759,13 +1811,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   )}
                 </div>
 
-                <div className="mt-6 flex justify-end">
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-stone-100">
+                  <div className="flex items-center gap-2">
+                    {/* Refund Action (Eligible when paid / partially refunded) */}
+                    {(inspectingOrder.payment_status === 'paid' || inspectingOrder.payment_status === 'partially_refunded') && inspectingOrder.order_status !== 'cancelled' && (
+                      <button
+                        onClick={() => handleRefundOrder(inspectingOrder.id, Number(inspectingOrder.grand_total))}
+                        disabled={isRefunding}
+                        className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        {isRefunding ? 'Refunding...' : 'Issue Refund'}
+                      </button>
+                    )}
+
+                    {/* Collect COD Action (Eligible when COD and not paid) */}
+                    {inspectingOrder.payment_method === 'cod' && inspectingOrder.payment_status !== 'paid' && inspectingOrder.order_status !== 'cancelled' && (
+                      <button
+                        onClick={() => handleCollectCod(inspectingOrder.id)}
+                        disabled={isCollectingCod}
+                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        {isCollectingCod ? 'Recording...' : 'Collect COD Payment'}
+                      </button>
+                    )}
+                  </div>
+
                   <button
                     onClick={() => {
                       setInspectingOrder(null);
                       if (onTabChange) onTabChange('orders');
                     }}
-                    className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold"
+                    className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold cursor-pointer"
                   >
                     Close
                   </button>
