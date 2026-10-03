@@ -71,6 +71,11 @@ class PaymentController extends Controller
         $user = $request->user();
         $order = Order::findOrFail($orderId);
 
+        // Strict payment method enforcement: only COD orders can be collected
+        if (strtolower($order->payment_method) !== 'cod') {
+            return $this->sendError("Order #{$order->order_number} has payment method '{$order->payment_method}'. Only Cash on Delivery orders can be collected via this endpoint.", [], 422);
+        }
+
         // Multi-tenant IDOR check: super_admin or restaurant owner who owns the restaurant or assigned rider
         $isOwner = Restaurant::where('id', $order->restaurant_id)->where('owner_id', $user->id)->exists();
         $isAssignedRider = $user->hasRole('delivery_rider') && ($order->rider_id == $user->rider?->id);

@@ -309,10 +309,10 @@ class StripeGateway implements PaymentGatewayInterface
     }
 
     /**
-     * Real Stripe refund execution.
+     * Real Stripe refund execution with deterministic idempotency key.
      * Never generates synthetic re_xxx locally.
      */
-    public function refund(Order $order, float $amount, string $reason): array
+    public function refund(Order $order, float $amount, string $reason, ?string $idempotencyKey = null): array
     {
         if (!$this->isConfigured()) {
             return [
@@ -335,6 +335,15 @@ class StripeGateway implements PaymentGatewayInterface
 
         $amountInCents = (int)round($amount * 100);
 
+        // Generate or use deterministic idempotency key
+        if (!$idempotencyKey) {
+            $alreadyRefundedCount = \App\Models\Refund::where('order_id', $order->id)
+                ->whereIn('status', [\App\Models\Refund::STATUS_COMPLETED, \App\Models\Refund::STATUS_PROCESSING])
+                ->count();
+            $nextSeq = $alreadyRefundedCount + 1;
+            $idempotencyKey = "refund_ord_{$order->id}_seq_{$nextSeq}_amt_{$amountInCents}";
+        }
+
         try {
             if (class_exists('\Stripe\StripeClient')) {
                 $stripe = new \Stripe\StripeClient($this->secretKey);
@@ -344,13 +353,16 @@ class StripeGateway implements PaymentGatewayInterface
                     'metadata' => [
                         'order_id' => (string)$order->id,
                         'order_number' => $order->order_number,
-                        'reason' => $reason,
+                        'reason' => substr($reason, 0, 500),
                     ],
+                ], [
+                    'idempotency_key' => $idempotencyKey,
                 ]);
 
                 return [
                     'success' => true,
                     'refund_id' => $stripeRefund->id,
+                    'idempotency_key' => $idempotencyKey,
                     'message' => "Stripe refund {$stripeRefund->id} processed successfully.",
                 ];
             } else {
@@ -362,11 +374,16 @@ class StripeGateway implements PaymentGatewayInterface
                     'metadata[reason]' => substr($reason, 0, 500),
                 ];
 
-                $response = $this->executeStripeRequest('POST', 'https://api.stripe.com/v1/refunds', $postData);
+                $extraHeaders = [
+                    "Idempotency-Key: {$idempotencyKey}",
+                ];
+
+                $response = $this->executeStripeRequest('POST', 'https://api.stripe.com/v1/refunds', $postData, $extraHeaders);
                 if (isset($response['id'])) {
                     return [
                         'success' => true,
                         'refund_id' => $response['id'],
+                        'idempotency_key' => $idempotencyKey,
                         'message' => "Stripe refund {$response['id']} processed successfully.",
                     ];
                 }
@@ -375,6 +392,7 @@ class StripeGateway implements PaymentGatewayInterface
                 return [
                     'success' => false,
                     'refund_id' => null,
+                    'idempotency_key' => $idempotencyKey,
                     'message' => "Stripe refund failed: {$errorMsg}",
                 ];
             }
@@ -382,6 +400,7 @@ class StripeGateway implements PaymentGatewayInterface
             return [
                 'success' => false,
                 'refund_id' => null,
+                'idempotency_key' => $idempotencyKey,
                 'message' => 'Stripe refund error: ' . $e->getMessage(),
             ];
         }
@@ -390,17 +409,17 @@ class StripeGateway implements PaymentGatewayInterface
     /**
      * Low-level helper to execute HTTPS requests to Stripe API endpoints.
      */
-    protected function executeStripeRequest(string $method, string $url, array $params = []): array
+    protected function executeStripeRequest(string $method, string $url, array $params = [], array $extraHeaders = []): array
     {
         if (!function_exists('curl_init')) {
             throw new Exception("cURL extension is required for Stripe API communication.");
         }
 
         $ch = curl_init();
-        $headers = [
+        $headers = array_merge([
             "Authorization: Bearer {$this->secretKey}",
             "Stripe-Version: 2024-06-20",
-        ];
+        ], $extraHeaders);
 
         if ($method === 'POST') {
             curl_setopt($ch, CURLOPT_POST, true);

@@ -40,11 +40,12 @@ class CashOnDeliveryGateway implements PaymentGatewayInterface
         ];
     }
 
-    public function refund(Order $order, float $amount, string $reason): array
+    public function refund(Order $order, float $amount, string $reason, ?string $idempotencyKey = null): array
     {
         return [
             'success' => true,
             'refund_id' => 'REF-COD-' . strtoupper(bin2hex(random_bytes(6))),
+            'idempotency_key' => $idempotencyKey,
             'message' => "Cash refund/adjustment of PKR {$amount} recorded.",
         ];
     }

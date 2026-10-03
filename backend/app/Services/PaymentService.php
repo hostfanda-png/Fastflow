@@ -288,6 +288,11 @@ class PaymentService
         return DB::transaction(function () use ($order, $actor, $reference) {
             $lockedOrder = Order::where('id', $order->id)->lockForUpdate()->firstOrFail();
 
+            // Strict payment_method validation: MUST be COD
+            if (strtolower($lockedOrder->payment_method) !== 'cod') {
+                throw new Exception("Cannot collect Cash on Delivery payment for an order with payment method '{$lockedOrder->payment_method}'. Only Cash on Delivery orders can be collected via the COD endpoint.");
+            }
+
             if ($lockedOrder->payment_status === 'paid') {
                 throw new Exception("Order #{$lockedOrder->order_number} has already been marked as paid.");
             }
@@ -333,15 +338,15 @@ class PaymentService
     }
 
     /**
-     * Process full or partial refund with balance validation & concurrency locking
+     * Process full or partial refund with balance validation, concurrency locking & idempotency protection
      */
-    public function processRefund(Order $order, float $amount, string $reason, User $actor): Refund
+    public function processRefund(Order $order, float $amount, string $reason, User $actor, ?string $idempotencyKey = null): Refund
     {
         if ($amount <= 0) {
             throw new Exception("Refund amount must be greater than zero.");
         }
 
-        return DB::transaction(function () use ($order, $amount, $reason, $actor) {
+        return DB::transaction(function () use ($order, $amount, $reason, $actor, $idempotencyKey) {
             $lockedOrder = Order::where('id', $order->id)->lockForUpdate()->firstOrFail();
 
             if ($lockedOrder->payment_status !== 'paid' && $lockedOrder->payment_status !== 'partially_refunded') {
@@ -361,9 +366,21 @@ class PaymentService
                 throw new Exception("Requested refund of PKR {$amount} exceeds remaining refundable balance of PKR {$maxRefundable}.");
             }
 
-            // Dispatch to gateway
+            $alreadyRefundedCount = Refund::where('order_id', $lockedOrder->id)
+                ->whereIn('status', [Refund::STATUS_COMPLETED, Refund::STATUS_PROCESSING])
+                ->count();
+            $nextSeq = $alreadyRefundedCount + 1;
+            $amountCents = (int)round($amount * 100);
+            $computedIdempotencyKey = $idempotencyKey ?: "refund_ord_{$lockedOrder->id}_seq_{$nextSeq}_amt_{$amountCents}";
+
+            // Dispatch to gateway with deterministic idempotency key
             $gateway = $this->getGateway($lockedOrder->payment_method);
-            $gatewayResult = $gateway->refund($lockedOrder, $amount, $reason);
+            $gatewayResult = $gateway->refund($lockedOrder, $amount, $reason, $computedIdempotencyKey);
+
+            if (!$gatewayResult['success']) {
+                AuditService::log('payment.refund_failed', 'Payments', (string)$lockedOrder->id, "Refund attempt of PKR {$amount} failed: " . ($gatewayResult['message'] ?? 'Unknown error'), $actor);
+                throw new Exception("Payment gateway rejected refund: " . ($gatewayResult['message'] ?? 'Unknown error'));
+            }
 
             $refundNumber = 'REF-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
 
@@ -374,7 +391,7 @@ class PaymentService
                 'customer_id' => $lockedOrder->customer_id,
                 'amount' => $amount,
                 'reason' => $reason,
-                'status' => $gatewayResult['success'] ? Refund::STATUS_COMPLETED : Refund::STATUS_FAILED,
+                'status' => Refund::STATUS_COMPLETED,
                 'gateway_refund_id' => $gatewayResult['refund_id'] ?? null,
                 'refund_actor' => $actor->role ?? 'super_admin',
                 'processed_by' => $actor->id,
@@ -382,12 +399,9 @@ class PaymentService
                 'metadata' => [
                     'gateway_message' => $gatewayResult['message'] ?? null,
                     'actor_name' => $actor->name,
+                    'idempotency_key' => $computedIdempotencyKey,
                 ],
             ]);
-
-            if (!$gatewayResult['success']) {
-                throw new Exception("Payment gateway rejected refund: " . ($gatewayResult['message'] ?? 'Unknown error'));
-            }
 
             // Update payment record
             $totalNowRefunded = round($alreadyRefunded + $amount, 2);
@@ -425,7 +439,7 @@ class PaymentService
                 'rider_payout' => 0.00,
                 'gateway_fee' => 0.00,
                 'reference' => $refundNumber,
-                'metadata' => ['reason' => $reason, 'refund_id' => $refund->id],
+                'metadata' => ['reason' => $reason, 'refund_id' => $refund->id, 'idempotency_key' => $computedIdempotencyKey],
                 'status' => 'settled',
             ]);
 

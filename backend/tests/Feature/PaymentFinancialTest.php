@@ -1077,4 +1077,223 @@ class PaymentFinancialTest extends TestCase
         // Cart is empty, rejected with 422 before untrusted fields could be processed
         $res->assertStatus(422);
     }
+
+    /**
+     * Test 24: Non-COD order (e.g. Stripe) CANNOT be collected via COD endpoint.
+     */
+    public function test_non_cod_order_cannot_be_collected_via_cod_endpoint(): void
+    {
+        $stripeOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1500.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+            'order_status' => 'confirmed',
+        ]);
+
+        $payment = Payment::create([
+            'order_id' => $stripeOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 1500.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_PENDING,
+        ]);
+
+        // Attempt to collect COD on an online card order
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$stripeOrder->id}/collect-cod", [
+            'reference' => 'MALICIOUS_COD_COLLECT',
+        ]);
+
+        // Must reject with 422 Unprocessable Entity
+        $res->assertStatus(422);
+
+        // Assert payment status MUST remain pending and never marked paid
+        $stripeOrder->refresh();
+        $payment->refresh();
+        $this->assertEquals('pending', $stripeOrder->payment_status);
+        $this->assertEquals(Payment::STATUS_PENDING, $payment->status);
+
+        // Assert no settled financial records were created
+        $this->assertDatabaseMissing('financial_transactions', [
+            'order_id' => $stripeOrder->id,
+            'status' => 'settled',
+        ]);
+    }
+
+    /**
+     * Test 25: Failed COD validation does not modify payment status or financial ledger.
+     */
+    public function test_failed_cod_validation_does_not_modify_payment_status_or_financial_ledger(): void
+    {
+        $stripeOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 2000.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'pending',
+            'order_status' => 'confirmed',
+        ]);
+
+        Payment::create([
+            'order_id' => $stripeOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 2000.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_PENDING,
+        ]);
+
+        // Restaurant owner tries to collect COD on a Stripe order
+        $res = $this->actingAs($this->owner, 'sanctum')->postJson("/api/v1/orders/{$stripeOrder->id}/collect-cod");
+        $res->assertStatus(422);
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $stripeOrder->id,
+            'payment_status' => 'pending',
+        ]);
+
+        $this->assertDatabaseHas('payments', [
+            'order_id' => $stripeOrder->id,
+            'status' => Payment::STATUS_PENDING,
+        ]);
+    }
+
+    /**
+     * Test 26: Stripe refund generates deterministic idempotency key and records metadata.
+     */
+    public function test_stripe_refund_generates_deterministic_idempotency_key_and_records_metadata(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1200.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Payment::create([
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 1200.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+            'transaction_id' => 'pi_test_stripe_idempotency_123',
+            'gateway_payment_intent_id' => 'pi_test_stripe_idempotency_123',
+            'paid_at' => now(),
+        ]);
+
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
+            'amount' => 600.00,
+            'reason' => 'Quality issue with main dish',
+        ]);
+
+        $res->assertStatus(200);
+
+        $refund = Refund::where('order_id', $paidOrder->id)->first();
+        $this->assertNotNull($refund);
+        $this->assertEquals(600.00, (float)$refund->amount);
+        $this->assertEquals(Refund::STATUS_COMPLETED, $refund->status);
+
+        // Verify deterministic idempotency key format: refund_ord_{orderId}_seq_{seq}_amt_{cents}
+        $expectedIdempotencyKey = "refund_ord_{$paidOrder->id}_seq_1_amt_60000";
+        $this->assertEquals($expectedIdempotencyKey, $refund->metadata['idempotency_key'] ?? null);
+
+        // Assert order transitioned to partially_refunded
+        $paidOrder->refresh();
+        $this->assertEquals('partially_refunded', $paidOrder->payment_status);
+    }
+
+    /**
+     * Test 27: Over-refund rejection prevents refund amount from exceeding remaining balance.
+     */
+    public function test_over_refund_rejection_prevents_refund_amount_exceeding_remaining_balance(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Payment::create([
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'payment_method' => 'cod',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+            'paid_at' => now(),
+        ]);
+
+        // Attempting to refund 1500 on a 1000 order
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
+            'amount' => 1500.00,
+            'reason' => 'Over refund test',
+        ]);
+
+        $res->assertStatus(422);
+
+        // No refund created
+        $this->assertEquals(0, Refund::where('order_id', $paidOrder->id)->count());
+    }
+
+    /**
+     * Test 28: Tenant isolation prevents restaurant owners from refunding other restaurants' orders.
+     */
+    public function test_tenant_isolation_prevents_restaurant_owners_from_refunding_other_restaurants_orders(): void
+    {
+        $orderRestaurant1 = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id, // Owned by $this->owner
+            'grand_total' => 800.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        // Owner 2 attempts to issue a refund on Owner 1's restaurant order
+        $res = $this->actingAs($this->owner2, 'sanctum')->postJson("/api/v1/orders/{$orderRestaurant1->id}/refund", [
+            'amount' => 400.00,
+            'reason' => 'Cross-tenant illegal refund attempt',
+        ]);
+
+        $res->assertStatus(403);
+        $this->assertEquals(0, Refund::where('order_id', $orderRestaurant1->id)->count());
+    }
+
+    /**
+     * Test 29: Unauthorized customer cannot collect COD or issue refund.
+     */
+    public function test_unauthorized_customer_cannot_collect_cod_or_issue_refund(): void
+    {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 900.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'pending',
+            'order_status' => 'delivered',
+        ]);
+
+        // Customer attempts to collect COD
+        $res1 = $this->actingAs($this->customer, 'sanctum')->postJson("/api/v1/orders/{$order->id}/collect-cod");
+        $res1->assertStatus(403);
+
+        // Customer attempts to refund
+        $res2 = $this->actingAs($this->customer, 'sanctum')->postJson("/api/v1/orders/{$order->id}/refund", [
+            'amount' => 900.00,
+            'reason' => 'Customer self refund attempt',
+        ]);
+        $res2->assertStatus(403);
+    }
 }

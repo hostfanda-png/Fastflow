@@ -38,9 +38,10 @@ interface PaymentGatewayInterface
      * @param Order $order
      * @param float $amount
      * @param string $reason
+     * @param string|null $idempotencyKey
      * @return array ['success' => bool, 'refund_id' => string|null, 'message' => string|null]
      */
-    public function refund(Order $order, float $amount, string $reason): array;
+    public function refund(Order $order, float $amount, string $reason, ?string $idempotencyKey = null): array;
 
     /**
      * Check if this gateway is enabled and configured in server environment
