@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Restaurant, Rider, Coupon, OrderStatus } from '../../types';
-import { adminApi } from '../../services/api/adminApi';
+import { adminApi, AdminDashboardMetrics, AdminCustomer } from '../../services/api/adminApi';
 import { 
   ShieldCheck, 
   Store, 
@@ -21,7 +21,8 @@ import {
   Star, 
   Search,
   Sliders,
-  Sparkles 
+  Sparkles,
+  Users
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -56,8 +57,59 @@ export const AdminDashboard: React.FC = () => {
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
-    'analytics' | 'restaurants' | 'riders' | 'orders' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings'
+    'analytics' | 'restaurants' | 'riders' | 'orders' | 'customers' | 'coupons' | 'financials' | 'reviews' | 'zones' | 'cms' | 'audit' | 'settings'
   >('analytics');
+
+  // Backend-authoritative Dashboard Metrics
+  const [metrics, setMetrics] = useState<AdminDashboardMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+
+  // Customer Management States
+  const [customersList, setCustomersList] = useState<AdminCustomer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerStatusFilter, setCustomerStatusFilter] = useState('all');
+  const [customersLoading, setCustomersLoading] = useState(false);
+
+  const fetchDashboardMetrics = async () => {
+    setMetricsLoading(true);
+    try {
+      const res = await adminApi.getDashboardMetrics();
+      if (res.success && res.data?.metrics) {
+        setMetrics(res.data.metrics);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
+
+  const fetchCustomers = async () => {
+    setCustomersLoading(true);
+    try {
+      const res = await adminApi.getCustomers({
+        search: customerSearch.trim() || undefined,
+        status: customerStatusFilter !== 'all' ? customerStatusFilter : undefined,
+      });
+      if (res.success && res.data) {
+        setCustomersList(res.data.data || []);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setCustomersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardMetrics();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'customers') {
+      fetchCustomers();
+    }
+  }, [activeTab, customerStatusFilter]);
 
   // Rider Management Modal States
   const [showRiderModal, setShowRiderModal] = useState(false);
@@ -286,46 +338,54 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      {/* KPI Cards (Backend Authoritative) */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
           <div className="text-xs text-stone-500 font-medium">Platform GMV</div>
           <div className="text-xl font-extrabold text-stone-900 font-mono tabular-nums mt-1">
-            {formatCurrency(totalGMV)}
+            {formatCurrency(metrics?.total_gmv ?? totalGMV)}
           </div>
-          <div className="text-[11px] text-stone-400 mt-0.5">Gross order value</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">Today: {formatCurrency(metrics?.today_gmv ?? 0)}</div>
         </div>
 
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
-          <div className="text-xs text-stone-500 font-medium">Net Platform Commission</div>
+          <div className="text-xs text-stone-500 font-medium">Net Commission</div>
           <div className="text-xl font-extrabold text-emerald-600 font-mono tabular-nums mt-1">
-            {formatCurrency(totalCommissions)}
+            {formatCurrency(metrics?.total_commission ?? totalCommissions)}
           </div>
-          <div className="text-[11px] text-emerald-700 mt-0.5">Retained platform fee</div>
+          <div className="text-[11px] text-emerald-700 mt-0.5">Today: {formatCurrency(metrics?.today_commission ?? 0)}</div>
         </div>
 
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
-          <div className="text-xs text-stone-500 font-medium">Total Orders Placed</div>
+          <div className="text-xs text-stone-500 font-medium">Orders Placed</div>
           <div className="text-xl font-extrabold text-stone-900 font-mono tabular-nums mt-1">
-            {totalOrdersCount}
+            {metrics?.total_orders ?? totalOrdersCount}
           </div>
-          <div className="text-[11px] text-stone-400 mt-0.5">Across all kitchens</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">{metrics?.today_orders ?? 0} today · {metrics?.active_deliveries ?? 0} in route</div>
         </div>
 
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
           <div className="text-xs text-stone-500 font-medium">Approved Kitchens</div>
           <div className="text-xl font-extrabold text-amber-600 font-mono tabular-nums mt-1">
-            {activeRestaurantsCount}
+            {metrics?.approved_restaurants ?? activeRestaurantsCount}
           </div>
-          <div className="text-[11px] text-stone-400 mt-0.5">{restaurants.length} registered</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">{metrics?.pending_restaurant_approvals ?? 0} pending review</div>
         </div>
 
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
           <div className="text-xs text-stone-500 font-medium">Active Courier Fleet</div>
           <div className="text-xl font-extrabold text-indigo-600 font-mono tabular-nums mt-1">
-            {activeRidersCount}
+            {metrics?.active_riders ?? activeRidersCount}
           </div>
-          <div className="text-[11px] text-stone-400 mt-0.5">Online for dispatch</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">{metrics?.total_riders ?? riders.length} couriers total</div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs">
+          <div className="text-xs text-stone-500 font-medium">Total Customers</div>
+          <div className="text-xl font-extrabold text-blue-600 font-mono tabular-nums mt-1">
+            {metrics?.total_customers ?? 0}
+          </div>
+          <div className="text-[11px] text-stone-400 mt-0.5">{metrics?.active_customers ?? 0} active accounts</div>
         </div>
       </div>
 
@@ -336,6 +396,7 @@ export const AdminDashboard: React.FC = () => {
           { id: 'restaurants', label: 'Kitchens & Commissions', icon: <Store className="w-3.5 h-3.5" /> },
           { id: 'riders', label: 'Riders & Dispatch', icon: <Bike className="w-3.5 h-3.5" /> },
           { id: 'orders', label: 'All Orders', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+          { id: 'customers', label: 'Customers', icon: <Users className="w-3.5 h-3.5" /> },
           { id: 'coupons', label: 'Coupons & Vouchers', icon: <Tag className="w-3.5 h-3.5" /> },
           { id: 'financials', label: 'Financial Transactions', icon: <DollarSign className="w-3.5 h-3.5" /> },
           { id: 'reviews', label: 'Reviews Moderation', icon: <Star className="w-3.5 h-3.5" /> },
@@ -930,6 +991,118 @@ export const AdminDashboard: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* TAB: Customers Management */}
+      {activeTab === 'customers' && (
+        <div className="bg-white rounded-3xl border border-stone-200 p-6 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-base font-bold text-stone-900">Customer Directory & Account Oversight</h2>
+              <p className="text-xs text-stone-500">Monitor customer accounts, spending volume, and activate or deactivate accounts safely</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && fetchCustomers()}
+                  placeholder="Search customer..."
+                  className="pl-8 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-xl w-48 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              <select
+                value={customerStatusFilter}
+                onChange={(e) => setCustomerStatusFilter(e.target.value)}
+                className="text-xs py-1.5 px-2.5 bg-stone-50 border border-stone-200 rounded-xl"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active Only</option>
+                <option value="inactive">Inactive Only</option>
+              </select>
+
+              <button
+                onClick={fetchCustomers}
+                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-semibold shadow-xs"
+              >
+                Filter
+              </button>
+            </div>
+          </div>
+
+          {customersLoading ? (
+            <div className="py-12 text-center text-xs text-stone-400">Loading customers directory...</div>
+          ) : customersList.length === 0 ? (
+            <div className="py-12 text-center text-xs text-stone-500">No customer accounts matched your criteria.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-stone-600">
+                <thead className="bg-stone-50 text-stone-900 font-bold border-b border-stone-200 uppercase tracking-wider text-[11px]">
+                  <tr>
+                    <th className="py-3 px-3">Customer</th>
+                    <th className="py-3 px-3">Contact</th>
+                    <th className="py-3 px-3">Orders</th>
+                    <th className="py-3 px-3">Total Spend</th>
+                    <th className="py-3 px-3">Status</th>
+                    <th className="py-3 px-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {customersList.map((cust) => {
+                    const isActive = cust.status === 'active';
+
+                    const handleToggleStatus = async () => {
+                      const targetStatus = isActive ? 'inactive' : 'active';
+                      try {
+                        const res = await adminApi.setCustomerStatus(cust.id, targetStatus);
+                        if (res.success) {
+                          showToast(`Customer account ${cust.name} set to ${targetStatus}`, 'info');
+                          fetchCustomers();
+                          fetchDashboardMetrics();
+                        }
+                      } catch (err: any) {
+                        showToast(err?.message || 'Failed to update customer status', 'error');
+                      }
+                    };
+
+                    return (
+                      <tr key={cust.id} className="hover:bg-stone-50/50">
+                        <td className="py-3 px-3 font-semibold text-stone-900">
+                          <div>{cust.name}</div>
+                          <div className="text-[10px] text-stone-400 font-normal">{cust.email}</div>
+                        </td>
+                        <td className="py-3 px-3">{cust.phone || 'No phone recorded'}</td>
+                        <td className="py-3 px-3 font-mono font-bold text-stone-900">{cust.orders_count} orders</td>
+                        <td className="py-3 px-3 font-mono font-bold text-emerald-600">{formatCurrency(cust.total_spent)}</td>
+                        <td className="py-3 px-3">
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                            isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-200 text-stone-600'
+                          }`}>
+                            {cust.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <button
+                            onClick={handleToggleStatus}
+                            className={`text-xs font-semibold hover:underline ${
+                              isActive ? 'text-red-600' : 'text-emerald-700'
+                            }`}
+                          >
+                            {isActive ? 'Deactivate' : 'Activate Account'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

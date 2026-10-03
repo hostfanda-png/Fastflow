@@ -189,24 +189,54 @@ Route::prefix('v1')->group(function () {
     // Super Admin Routes
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:super_admin'])->group(function () {
         Route::get('dashboard', [AdminController::class, 'dashboard']);
+
+        // Restaurants Management & Approval Lifecycle
         Route::get('restaurants', [AdminController::class, 'getRestaurants']);
+        Route::get('restaurants/{restaurant}', [AdminController::class, 'showRestaurant']);
         Route::put('restaurants/{restaurant}/status', [AdminController::class, 'setRestaurantStatus']);
+        Route::post('restaurants/{restaurant}/approve', [AdminController::class, 'approveRestaurant']);
+        Route::post('restaurants/{restaurant}/reject', [AdminController::class, 'rejectRestaurant']);
+        Route::post('restaurants/{restaurant}/suspend', [AdminController::class, 'suspendRestaurant']);
+        Route::post('restaurants/{restaurant}/reactivate', [AdminController::class, 'reactivateRestaurant']);
         Route::put('restaurants/{restaurant}/commission', [AdminController::class, 'updateCommission']);
+
+        // Orders Management
+        Route::get('orders', [AdminController::class, 'getOrders']);
+        Route::get('orders/{order}', [AdminController::class, 'showOrder']);
+        Route::post('orders/{order}/assign-rider', [AdminController::class, 'assignRider']);
+        Route::post('orders/{order}/unassign-rider', [AdminController::class, 'unassignRider']);
+        Route::post('orders/{order}/auto-dispatch', [AdminController::class, 'autoDispatch']);
+        Route::post('orders/{order}/refund', [PaymentController::class, 'refund']);
+        Route::post('orders/{order}/collect-cod', [PaymentController::class, 'collectCod']);
+
+        // Customer Management
+        Route::get('customers', [AdminController::class, 'getCustomers']);
+        Route::get('customers/{customer}', [AdminController::class, 'showCustomer']);
+        Route::put('customers/{customer}/status', [AdminController::class, 'setCustomerStatus']);
+
+        // Riders Fleet Management
         Route::get('riders', [AdminController::class, 'getRiders']);
         Route::post('riders', [AdminController::class, 'storeRider']);
         Route::get('riders/{rider}', [AdminController::class, 'showRider']);
         Route::put('riders/{rider}', [AdminController::class, 'updateRider']);
         Route::delete('riders/{rider}', [AdminController::class, 'deleteRider']);
-        Route::post('orders/{order}/assign-rider', [AdminController::class, 'assignRider']);
-        Route::post('orders/{order}/unassign-rider', [AdminController::class, 'unassignRider']);
-        Route::post('orders/{order}/auto-dispatch', [AdminController::class, 'autoDispatch']);
+
+        // Financials, Settlements, Refunds
         Route::get('financials', [AdminController::class, 'getFinancials']);
         Route::get('settlements', [AdminController::class, 'getSettlements']);
         Route::post('settlements', [AdminController::class, 'createSettlement']);
         Route::put('settlements/{settlement}/pay', [AdminController::class, 'markSettlementPaid']);
         Route::get('refunds', [AdminController::class, 'getRefunds']);
-        Route::post('orders/{order}/refund', [PaymentController::class, 'refund']);
-        Route::post('orders/{order}/collect-cod', [PaymentController::class, 'collectCod']);
+
+        // Global Settings & Platform Delivery Zones
+        Route::get('settings', [AdminController::class, 'getSettings']);
+        Route::put('settings', [AdminController::class, 'updateSettings']);
+        Route::get('delivery-zones', [AdminController::class, 'getDeliveryZones']);
+        Route::post('delivery-zones', [AdminController::class, 'storeDeliveryZone']);
+        Route::put('delivery-zones/{zone}', [AdminController::class, 'updateDeliveryZone']);
+        Route::delete('delivery-zones/{zone}', [AdminController::class, 'deleteDeliveryZone']);
+
+        // Platform Audit Trail
         Route::get('audit-logs', [AdminController::class, 'getAuditLogs']);
     });
 });

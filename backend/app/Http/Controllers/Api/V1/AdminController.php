@@ -18,6 +18,7 @@ use App\Models\Page;
 use App\Models\OrderStatusHistory;
 use App\Models\Settlement;
 use App\Models\Refund;
+use App\Models\Payment;
 use App\Services\AuditService;
 use App\Services\OrderService;
 use App\Services\FinancialService;
@@ -34,35 +35,188 @@ class AdminController extends Controller
     {
         $this->financialService = $financialService;
     }
+
+    /**
+     * Authoritative Platform Dashboard Metrics computed purely from database
+     */
     public function dashboard(): JsonResponse
     {
         $totalOrders = Order::count();
-        $totalGMV = Order::where('order_status', '!=', 'cancelled')->sum('grand_total');
-        $totalCommission = FinancialTransaction::sum('platform_commission');
-        $restaurantsCount = Restaurant::count();
-        $approvedRestaurantsCount = Restaurant::where('status', 'approved')->count();
-        $ridersCount = Rider::count();
-        $activeRidersCount = Rider::where('status', 'available')->where('is_active', true)->count();
-        $customersCount = User::whereHas('role', fn($q) => $q->where('name', 'customer'))->count();
+        $todayOrders = Order::whereDate('created_at', today())->count();
+        $totalGMV = (float) Order::where('order_status', '!=', 'cancelled')->sum('grand_total');
+        $todayGMV = (float) Order::whereDate('created_at', today())->where('order_status', '!=', 'cancelled')->sum('grand_total');
+        $totalCommission = (float) FinancialTransaction::sum('platform_commission');
+        $todayCommission = (float) FinancialTransaction::whereDate('created_at', today())->sum('platform_commission');
+
+        $totalRestaurants = Restaurant::count();
+        $approvedRestaurants = Restaurant::where('status', 'approved')->count();
+        $pendingRestaurants = Restaurant::where('status', 'pending')->count();
+        $suspendedRestaurants = Restaurant::where('status', 'suspended')->count();
+        $rejectedRestaurants = Restaurant::where('status', 'rejected')->count();
+
+        $totalRiders = Rider::count();
+        $activeRiders = Rider::where('status', 'available')->where('is_active', true)->count();
+
+        $totalCustomers = User::whereHas('role', fn($q) => $q->where('name', 'customer'))->count();
+        $activeCustomers = User::whereHas('role', fn($q) => $q->where('name', 'customer'))->where('status', 'active')->count();
+
+        $totalRefunds = (float) Refund::sum('amount');
+        $pendingSettlements = Settlement::where('status', 'pending')->count();
+        $pendingSettlementsAmount = (float) Settlement::where('status', 'pending')->sum('net_payout');
+        $completedSettlements = Settlement::where('status', 'paid')->count();
+        $completedSettlementsAmount = (float) Settlement::where('status', 'paid')->sum('net_payout');
+
+        $failedPayments = Payment::where('status', 'failed')->count();
+        $cancelledOrders = Order::where('order_status', 'cancelled')->count();
+        $deliveredOrders = Order::where('order_status', 'delivered')->count();
+        $activeDeliveries = Order::whereIn('order_status', ['assigned_to_rider', 'picked_up', 'on_the_way'])->count();
 
         return $this->sendResponse([
             'metrics' => [
-                'total_gmv' => (float)$totalGMV,
-                'total_commission' => (float)$totalCommission,
+                'total_gmv' => $totalGMV,
+                'today_gmv' => $todayGMV,
+                'total_commission' => $totalCommission,
+                'today_commission' => $todayCommission,
                 'total_orders' => $totalOrders,
-                'total_restaurants' => $restaurantsCount,
-                'approved_restaurants' => $approvedRestaurantsCount,
-                'total_riders' => $ridersCount,
-                'active_riders' => $activeRidersCount,
-                'total_customers' => $customersCount,
+                'today_orders' => $todayOrders,
+                'cancelled_orders' => $cancelledOrders,
+                'delivered_orders' => $deliveredOrders,
+                'active_deliveries' => $activeDeliveries,
+                'total_restaurants' => $totalRestaurants,
+                'approved_restaurants' => $approvedRestaurants,
+                'pending_restaurant_approvals' => $pendingRestaurants,
+                'suspended_restaurants' => $suspendedRestaurants,
+                'rejected_restaurants' => $rejectedRestaurants,
+                'total_riders' => $totalRiders,
+                'active_riders' => $activeRiders,
+                'total_customers' => $totalCustomers,
+                'active_customers' => $activeCustomers,
+                'total_refunds' => $totalRefunds,
+                'pending_settlements' => $pendingSettlements,
+                'pending_settlements_amount' => $pendingSettlementsAmount,
+                'completed_settlements' => $completedSettlements,
+                'completed_settlements_amount' => $completedSettlementsAmount,
+                'failed_payments' => $failedPayments,
             ]
         ], 'Admin dashboard metrics');
     }
 
-    public function getRestaurants(): JsonResponse
+    /**
+     * Restaurant Listing with Search, Status Filtering, and Pagination
+     */
+    public function getRestaurants(Request $request): JsonResponse
     {
-        $restaurants = Restaurant::with(['owner', 'cuisines'])->orderByDesc('created_at')->get();
+        $query = Restaurant::with(['owner:id,name,email,phone', 'cuisines'])
+            ->withCount(['orders', 'products'])
+            ->orderByDesc('created_at');
+
+        if ($status = $request->query('status')) {
+            if ($status !== 'all') {
+                $query->where('status', $status);
+            }
+        }
+
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('city', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->has('per_page')) {
+            $restaurants = $query->paginate((int)$request->query('per_page', 15));
+        } else {
+            $restaurants = $query->get();
+        }
+
         return $this->sendResponse($restaurants, 'All restaurants retrieved');
+    }
+
+    /**
+     * Full Restaurant Details for Admin Inspection
+     */
+    public function showRestaurant(int $restaurantId): JsonResponse
+    {
+        $restaurant = Restaurant::with([
+            'owner:id,name,email,phone',
+            'cuisines',
+            'hours',
+            'deliveryZones',
+            'categories.products',
+        ])->withCount(['orders', 'products'])->findOrFail($restaurantId);
+
+        $totalRevenue = Order::where('restaurant_id', $restaurantId)
+            ->where('order_status', '!=', 'cancelled')
+            ->sum('grand_total');
+
+        $recentOrders = Order::where('restaurant_id', $restaurantId)
+            ->with(['customer:id,name', 'payment'])
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        return $this->sendResponse([
+            'restaurant' => $restaurant,
+            'stats' => [
+                'total_revenue' => (float)$totalRevenue,
+                'total_orders' => (int)$restaurant->orders_count,
+                'total_products' => (int)$restaurant->products_count,
+            ],
+            'recent_orders' => $recentOrders,
+        ], 'Restaurant details retrieved');
+    }
+
+    public function approveRestaurant(Request $request, int $restaurantId): JsonResponse
+    {
+        $restaurant = Restaurant::findOrFail($restaurantId);
+        $restaurant->status = 'approved';
+        $restaurant->is_active = true;
+        $restaurant->save();
+
+        AuditService::log('admin.restaurant_approve', 'Restaurants', (string)$restaurant->id, "Approved restaurant {$restaurant->name}", $request->user());
+
+        return $this->sendResponse($restaurant, "Restaurant {$restaurant->name} approved successfully");
+    }
+
+    public function rejectRestaurant(Request $request, int $restaurantId): JsonResponse
+    {
+        $restaurant = Restaurant::findOrFail($restaurantId);
+        $reason = $request->input('reason', 'Administrative decision');
+        $restaurant->status = 'rejected';
+        $restaurant->is_active = false;
+        $restaurant->is_open = false;
+        $restaurant->save();
+
+        AuditService::log('admin.restaurant_reject', 'Restaurants', (string)$restaurant->id, "Rejected restaurant {$restaurant->name}: {$reason}", $request->user());
+
+        return $this->sendResponse($restaurant, "Restaurant {$restaurant->name} rejected");
+    }
+
+    public function suspendRestaurant(Request $request, int $restaurantId): JsonResponse
+    {
+        $restaurant = Restaurant::findOrFail($restaurantId);
+        $reason = $request->input('reason', 'Operational suspension');
+        $restaurant->status = 'suspended';
+        $restaurant->is_open = false;
+        $restaurant->save();
+
+        AuditService::log('admin.restaurant_suspend', 'Restaurants', (string)$restaurant->id, "Suspended restaurant {$restaurant->name}: {$reason}", $request->user());
+
+        return $this->sendResponse($restaurant, "Restaurant {$restaurant->name} suspended");
+    }
+
+    public function reactivateRestaurant(Request $request, int $restaurantId): JsonResponse
+    {
+        $restaurant = Restaurant::findOrFail($restaurantId);
+        $restaurant->status = 'approved';
+        $restaurant->is_active = true;
+        $restaurant->save();
+
+        AuditService::log('admin.restaurant_reactivate', 'Restaurants', (string)$restaurant->id, "Reactivated restaurant {$restaurant->name}", $request->user());
+
+        return $this->sendResponse($restaurant, "Restaurant {$restaurant->name} reactivated");
     }
 
     public function setRestaurantStatus(Request $request, int $restaurantId): JsonResponse
@@ -73,9 +227,15 @@ class AdminController extends Controller
         ])['status'];
 
         $restaurant->status = $status;
+        if (in_array($status, ['suspended', 'rejected'])) {
+            $restaurant->is_open = false;
+        }
+        if ($status === 'approved') {
+            $restaurant->is_active = true;
+        }
         $restaurant->save();
 
-        AuditService::log('admin.restaurant_status', 'Restaurants', (string)$restaurant->id, "Changed status of {$restaurant->name} to {$status}");
+        AuditService::log('admin.restaurant_status', 'Restaurants', (string)$restaurant->id, "Changed status of {$restaurant->name} to {$status}", $request->user());
 
         return $this->sendResponse($restaurant, "Restaurant status updated to {$status}");
     }
@@ -612,5 +772,272 @@ class AdminController extends Controller
     {
         $logs = AuditLog::orderByDesc('created_at')->limit(100)->get();
         return $this->sendResponse($logs, 'Platform audit trail');
+    }
+
+    /**
+     * Phase 6: Admin Order Management with Filtering, Search & Pagination
+     */
+    public function getOrders(Request $request): JsonResponse
+    {
+        $query = Order::with([
+            'restaurant:id,name,city',
+            'customer:id,name,email,phone',
+            'rider.user:id,name,phone',
+            'payment:id,order_id,amount,status,payment_method,gateway_reference',
+        ])->orderByDesc('created_at');
+
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('order_number', 'like', "%{$search}%")
+                  ->orWhere('customer_name', 'like', "%{$search}%")
+                  ->orWhere('customer_phone', 'like', "%{$search}%")
+                  ->orWhereHas('restaurant', fn($rq) => $rq->where('name', 'like', "%{$search}%"));
+            });
+        }
+
+        if ($status = $request->query('order_status')) {
+            if ($status !== 'all') {
+                $query->where('order_status', $status);
+            }
+        }
+
+        if ($paymentStatus = $request->query('payment_status')) {
+            if ($paymentStatus !== 'all') {
+                $query->where('payment_status', $paymentStatus);
+            }
+        }
+
+        if ($restaurantId = $request->query('restaurant_id')) {
+            $query->where('restaurant_id', $restaurantId);
+        }
+
+        if ($customerId = $request->query('customer_id')) {
+            $query->where('customer_id', $customerId);
+        }
+
+        if ($riderId = $request->query('rider_id')) {
+            $query->where('rider_id', $riderId);
+        }
+
+        if ($dateFrom = $request->query('date_from')) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+
+        if ($dateTo = $request->query('date_to')) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        $orders = $query->paginate((int)$request->query('per_page', 15));
+
+        return $this->sendResponse($orders, 'Admin orders retrieved');
+    }
+
+    /**
+     * Phase 6: Show Detailed Order Snapshot for Admin
+     */
+    public function showOrder(int $orderId): JsonResponse
+    {
+        $order = Order::with([
+            'restaurant',
+            'customer:id,name,email,phone',
+            'rider.user',
+            'items.addons',
+            'statusHistories',
+            'payment',
+            'refunds',
+            'financialTransaction',
+        ])->findOrFail($orderId);
+
+        return $this->sendResponse($order, 'Order details retrieved');
+    }
+
+    /**
+     * Phase 6: Admin Customer Management with Search, Filtering & Spend Stats
+     * Never exposes password hashes, remember tokens, or payment secrets.
+     */
+    public function getCustomers(Request $request): JsonResponse
+    {
+        $query = User::whereHas('role', fn($q) => $q->where('name', 'customer'))
+            ->withCount('orders')
+            ->orderByDesc('created_at');
+
+        if ($status = $request->query('status')) {
+            if ($status !== 'all') {
+                $query->where('status', $status);
+            }
+        }
+
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%");
+            });
+        }
+
+        $customers = $query->paginate((int)$request->query('per_page', 15));
+
+        $customers->getCollection()->transform(function ($user) {
+            $totalSpent = Order::where('customer_id', $user->id)
+                ->where('order_status', '!=', 'cancelled')
+                ->sum('grand_total');
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'status' => $user->status ?? 'active',
+                'orders_count' => (int)$user->orders_count,
+                'total_spent' => (float)$totalSpent,
+                'created_at' => $user->created_at?->toIso8601String(),
+            ];
+        });
+
+        return $this->sendResponse($customers, 'Customer list retrieved');
+    }
+
+    /**
+     * Phase 6: Customer Details for Admin
+     */
+    public function showCustomer(int $customerId): JsonResponse
+    {
+        $customer = User::whereHas('role', fn($q) => $q->where('name', 'customer'))
+            ->with(['addresses'])
+            ->findOrFail($customerId);
+
+        $recentOrders = Order::where('customer_id', $customerId)
+            ->with(['restaurant:id,name', 'payment'])
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        $totalSpent = Order::where('customer_id', $customerId)
+            ->where('order_status', '!=', 'cancelled')
+            ->sum('grand_total');
+
+        return $this->sendResponse([
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'status' => $customer->status ?? 'active',
+                'created_at' => $customer->created_at?->toIso8601String(),
+            ],
+            'stats' => [
+                'total_spent' => (float)$totalSpent,
+                'total_orders' => Order::where('customer_id', $customerId)->count(),
+            ],
+            'addresses' => $customer->addresses,
+            'recent_orders' => $recentOrders,
+        ], 'Customer details retrieved');
+    }
+
+    /**
+     * Phase 6: Activate or Deactivate Customer Account
+     */
+    public function setCustomerStatus(Request $request, int $customerId): JsonResponse
+    {
+        $customer = User::whereHas('role', fn($q) => $q->where('name', 'customer'))
+            ->findOrFail($customerId);
+
+        $validated = $request->validate([
+            'status' => ['required', 'in:active,inactive,suspended'],
+        ]);
+
+        $customer->status = $validated['status'];
+        $customer->save();
+
+        if ($validated['status'] !== 'active') {
+            $customer->tokens()->delete();
+        }
+
+        AuditService::log('admin.customer_status', 'Customers', (string)$customer->id, "Changed status of customer {$customer->name} to {$validated['status']}", $request->user());
+
+        return $this->sendResponse([
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'status' => $customer->status,
+        ], "Customer status updated to {$validated['status']}");
+    }
+
+    /**
+     * Phase 6: Platform Settings Management
+     */
+    public function getSettings(): JsonResponse
+    {
+        $settings = Setting::all()->pluck('value', 'key');
+        return $this->sendResponse($settings, 'Platform settings retrieved');
+    }
+
+    public function updateSettings(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'settings' => ['required', 'array'],
+        ]);
+
+        foreach ($validated['settings'] as $key => $value) {
+            Setting::set($key, (string)$value);
+        }
+
+        AuditService::log('admin.settings_update', 'Settings', null, "Updated system settings", $request->user());
+
+        return $this->sendResponse(Setting::all()->pluck('value', 'key'), 'Settings updated successfully');
+    }
+
+    /**
+     * Phase 6: Platform Delivery Zones Management
+     */
+    public function getDeliveryZones(): JsonResponse
+    {
+        $zones = DeliveryZone::orderBy('city')->orderBy('name')->get();
+        return $this->sendResponse($zones, 'Platform delivery zones');
+    }
+
+    public function storeDeliveryZone(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'city' => ['required', 'string', 'max:100'],
+            'radius_km' => ['required', 'numeric', 'min:0.5', 'max:100'],
+            'base_fee' => ['required', 'numeric', 'min:0'],
+            'per_km_fee' => ['required', 'numeric', 'min:0'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $zone = DeliveryZone::create($validated);
+        AuditService::log('admin.delivery_zone_create', 'DeliveryZones', (string)$zone->id, "Created delivery zone {$zone->name}", $request->user());
+
+        return $this->sendResponse($zone, 'Delivery zone created', 201);
+    }
+
+    public function updateDeliveryZone(Request $request, int $zoneId): JsonResponse
+    {
+        $zone = DeliveryZone::findOrFail($zoneId);
+        $validated = $request->validate([
+            'name' => ['sometimes', 'string', 'max:100'],
+            'city' => ['sometimes', 'string', 'max:100'],
+            'radius_km' => ['sometimes', 'numeric', 'min:0.5', 'max:100'],
+            'base_fee' => ['sometimes', 'numeric', 'min:0'],
+            'per_km_fee' => ['sometimes', 'numeric', 'min:0'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $zone->update($validated);
+        AuditService::log('admin.delivery_zone_update', 'DeliveryZones', (string)$zone->id, "Updated delivery zone {$zone->name}", $request->user());
+
+        return $this->sendResponse($zone, 'Delivery zone updated');
+    }
+
+    public function deleteDeliveryZone(Request $request, int $zoneId): JsonResponse
+    {
+        $zone = DeliveryZone::findOrFail($zoneId);
+        $zoneName = $zone->name;
+        $zone->delete();
+
+        AuditService::log('admin.delivery_zone_delete', 'DeliveryZones', (string)$zoneId, "Deleted delivery zone {$zoneName}", $request->user());
+
+        return $this->sendResponse(null, "Delivery zone {$zoneName} removed");
     }
 }
