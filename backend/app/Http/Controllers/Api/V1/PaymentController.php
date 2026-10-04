@@ -119,10 +119,28 @@ class PaymentController extends Controller
         $validated = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'reason' => ['required', 'string', 'max:500'],
+            'idempotency_key' => ['nullable', 'string', 'max:191'],
         ]);
 
+        $idempotencyKey = $validated['idempotency_key']
+            ?? $request->header('Idempotency-Key')
+            ?? $request->header('X-Idempotency-Key');
+
+        if (is_string($idempotencyKey)) {
+            $idempotencyKey = trim($idempotencyKey);
+            if ($idempotencyKey === '') {
+                $idempotencyKey = null;
+            }
+        }
+
         try {
-            $refund = $this->paymentService->processRefund($order, (float)$validated['amount'], $validated['reason'], $user);
+            $refund = $this->paymentService->processRefund(
+                $order,
+                (float)$validated['amount'],
+                $validated['reason'],
+                $user,
+                $idempotencyKey
+            );
             return $this->sendResponse($refund, 'Refund processed successfully.');
         } catch (Exception $e) {
             return $this->sendError($e->getMessage(), [], 422);

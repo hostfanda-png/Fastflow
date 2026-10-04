@@ -33,6 +33,7 @@ class Refund extends Model
         'reason',
         'status',
         'gateway_refund_id',
+        'idempotency_key',
         'refund_actor',
         'processed_by',
         'processed_at',

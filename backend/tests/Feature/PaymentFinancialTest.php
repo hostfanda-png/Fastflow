@@ -1163,7 +1163,7 @@ class PaymentFinancialTest extends TestCase
     }
 
     /**
-     * Test 26: Stripe refund generates deterministic idempotency key and records metadata.
+     * Test 26: Stripe refund generates persistent operation-bound idempotency key and records metadata.
      */
     public function test_stripe_refund_generates_deterministic_idempotency_key_and_records_metadata(): void
     {
@@ -1189,6 +1189,22 @@ class PaymentFinancialTest extends TestCase
             'paid_at' => now(),
         ]);
 
+        // Mock StripeGateway to verify the persisted operation-bound idempotency key is passed to the gateway
+        $mockStripe = $this->mock(\App\Services\Payment\StripeGateway::class);
+        $mockStripe->shouldReceive('refund')
+            ->once()
+            ->withArgs(function ($orderArg, $amountArg, $reasonArg, $idempotencyKeyArg) use ($paidOrder) {
+                return $orderArg->id === $paidOrder->id
+                    && (float)$amountArg === 600.00
+                    && str_starts_with((string)$idempotencyKeyArg, "refund_ord_{$paidOrder->id}_op_")
+                    && str_ends_with((string)$idempotencyKeyArg, '_amt_60000');
+            })
+            ->andReturn([
+                'success' => true,
+                'refund_id' => 're_test_stripe_op_001',
+                'message' => 'Stripe refund re_test_stripe_op_001 processed successfully.',
+            ]);
+
         $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
             'amount' => 600.00,
             'reason' => 'Quality issue with main dish',
@@ -1200,9 +1216,11 @@ class PaymentFinancialTest extends TestCase
         $this->assertNotNull($refund);
         $this->assertEquals(600.00, (float)$refund->amount);
         $this->assertEquals(Refund::STATUS_COMPLETED, $refund->status);
+        $this->assertEquals('re_test_stripe_op_001', $refund->gateway_refund_id);
 
-        // Verify deterministic idempotency key format: refund_ord_{orderId}_seq_{seq}_amt_{cents}
-        $expectedIdempotencyKey = "refund_ord_{$paidOrder->id}_seq_1_amt_60000";
+        // Verify persistent operation-bound idempotency key format: refund_ord_{orderId}_op_{refundId}_amt_{cents}
+        $expectedIdempotencyKey = "refund_ord_{$paidOrder->id}_op_{$refund->id}_amt_60000";
+        $this->assertEquals($expectedIdempotencyKey, $refund->idempotency_key);
         $this->assertEquals($expectedIdempotencyKey, $refund->metadata['idempotency_key'] ?? null);
 
         // Assert order transitioned to partially_refunded
@@ -1295,5 +1313,228 @@ class PaymentFinancialTest extends TestCase
             'reason' => 'Customer self refund attempt',
         ]);
         $res2->assertStatus(403);
+    }
+
+    /**
+     * Test 30: Client Idempotency-Key retry returns existing refund without duplicate Stripe call or ledger entry.
+     */
+    public function test_client_idempotency_key_retry_returns_existing_refund_without_duplicate_stripe_call_or_ledger_entry(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1500.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Payment::create([
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 1500.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+            'transaction_id' => 'pi_test_retry_idemp_999',
+            'gateway_payment_intent_id' => 'pi_test_retry_idemp_999',
+            'paid_at' => now(),
+        ]);
+
+        $clientKey = 'client-refund-key-ord-' . $paidOrder->id . '-001';
+
+        // Stripe gateway must only be invoked ONCE across both requests
+        $mockStripe = $this->mock(\App\Services\Payment\StripeGateway::class);
+        $mockStripe->shouldReceive('refund')
+            ->once()
+            ->withArgs(function ($orderArg, $amountArg, $reasonArg, $idempotencyKeyArg) use ($paidOrder, $clientKey) {
+                return $orderArg->id === $paidOrder->id
+                    && (float)$amountArg === 500.00
+                    && $idempotencyKeyArg === $clientKey;
+            })
+            ->andReturn([
+                'success' => true,
+                'refund_id' => 're_stripe_single_exec_777',
+                'idempotency_key' => $clientKey,
+                'message' => 'Stripe refund processed.',
+            ]);
+
+        // 1st Request with Idempotency-Key header
+        $res1 = $this->actingAs($this->admin, 'sanctum')
+            ->withHeaders(['Idempotency-Key' => $clientKey])
+            ->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
+                'amount' => 500.00,
+                'reason' => 'Cold food item',
+            ]);
+
+        $res1->assertStatus(200);
+        $firstRefundId = $res1->json('data.id');
+
+        // 2nd Retry Request with exact same Idempotency-Key header
+        $res2 = $this->actingAs($this->admin, 'sanctum')
+            ->withHeaders(['Idempotency-Key' => $clientKey])
+            ->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
+                'amount' => 500.00,
+                'reason' => 'Cold food item',
+            ]);
+
+        $res2->assertStatus(200);
+        $secondRefundId = $res2->json('data.id');
+
+        // Must return the exact same Refund record
+        $this->assertEquals($firstRefundId, $secondRefundId);
+        $this->assertEquals(1, Refund::where('order_id', $paidOrder->id)->count());
+        $this->assertEquals(1, FinancialTransaction::where('order_id', $paidOrder->id)->where('transaction_type', 'refund')->count());
+
+        $payment = Payment::where('order_id', $paidOrder->id)->first();
+        $this->assertEquals(500.00, (float)$payment->refunded_amount);
+    }
+
+    /**
+     * Test 31: Recovery of in-flight (processing) refund after simulated interruption reuses same idempotency_key and Refund record.
+     */
+    public function test_recovery_of_in_flight_processing_refund_reuses_same_idempotency_key_and_refund_record(): void
+    {
+        $paidOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'stripe',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        $payment = Payment::create([
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'stripe',
+            'payment_method' => 'stripe',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+            'transaction_id' => 'pi_test_inflight_recovery_555',
+            'gateway_payment_intent_id' => 'pi_test_inflight_recovery_555',
+            'paid_at' => now(),
+        ]);
+
+        // Simulate an interrupted refund operation left in STATUS_PROCESSING before local finalization completed
+        $persistedKey = "refund_ord_{$paidOrder->id}_op_99_amt_40000";
+        $inFlightRefund = Refund::create([
+            'refund_number' => 'REF-20261003-INFLIGHT',
+            'order_id' => $paidOrder->id,
+            'payment_id' => $payment->id,
+            'customer_id' => $this->customer->id,
+            'amount' => 400.00,
+            'reason' => 'Spilled drink recovery test',
+            'status' => Refund::STATUS_PROCESSING,
+            'gateway_refund_id' => null,
+            'idempotency_key' => $persistedKey,
+            'refund_actor' => 'super_admin',
+            'processed_by' => $this->admin->id,
+            'metadata' => ['idempotency_key' => $persistedKey],
+        ]);
+
+        // When retried (even without client Idempotency-Key), PaymentService must find the in-flight refund
+        // and pass its exact persisted idempotency_key to StripeGateway
+        $mockStripe = $this->mock(\App\Services\Payment\StripeGateway::class);
+        $mockStripe->shouldReceive('refund')
+            ->once()
+            ->withArgs(function ($orderArg, $amountArg, $reasonArg, $idempotencyKeyArg) use ($paidOrder, $persistedKey) {
+                return $orderArg->id === $paidOrder->id
+                    && (float)$amountArg === 400.00
+                    && $idempotencyKeyArg === $persistedKey;
+            })
+            ->andReturn([
+                'success' => true,
+                'refund_id' => 're_recovered_from_stripe_888',
+                'idempotency_key' => $persistedKey,
+                'message' => 'Recovered idempotent Stripe refund.',
+            ]);
+
+        $res = $this->actingAs($this->admin, 'sanctum')->postJson("/api/v1/admin/orders/{$paidOrder->id}/refund", [
+            'amount' => 400.00,
+            'reason' => 'Spilled drink recovery test',
+        ]);
+
+        $res->assertStatus(200);
+        $this->assertEquals($inFlightRefund->id, $res->json('data.id'));
+
+        // Verify no second Refund row was created and the existing record was finalized
+        $this->assertEquals(1, Refund::where('order_id', $paidOrder->id)->count());
+        $inFlightRefund->refresh();
+        $this->assertEquals(Refund::STATUS_COMPLETED, $inFlightRefund->status);
+        $this->assertEquals('re_recovered_from_stripe_888', $inFlightRefund->gateway_refund_id);
+
+        $payment->refresh();
+        $paidOrder->refresh();
+        $this->assertEquals(400.00, (float)$payment->refunded_amount);
+        $this->assertEquals(Payment::STATUS_PARTIALLY_REFUNDED, $payment->status);
+        $this->assertEquals('partially_refunded', $paidOrder->payment_status);
+    }
+
+    /**
+     * Test 32: Cross-order reuse of Idempotency-Key is strictly rejected.
+     */
+    public function test_cross_order_reuse_of_idempotency_key_is_rejected(): void
+    {
+        $order1 = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        $order2 = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'restaurant_id' => $this->restaurant->id,
+            'grand_total' => 1000.00,
+            'payment_method' => 'cod',
+            'payment_status' => 'paid',
+            'order_status' => 'delivered',
+        ]);
+
+        Payment::create([
+            'order_id' => $order1->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'payment_method' => 'cod',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+        ]);
+
+        Payment::create([
+            'order_id' => $order2->id,
+            'customer_id' => $this->customer->id,
+            'gateway' => 'cod',
+            'payment_method' => 'cod',
+            'amount' => 1000.00,
+            'currency' => 'PKR',
+            'status' => Payment::STATUS_COMPLETED,
+        ]);
+
+        $sharedKey = 'shared-idempotency-key-across-orders-999';
+
+        // Refund on Order 1 succeeds
+        $res1 = $this->actingAs($this->admin, 'sanctum')
+            ->withHeaders(['Idempotency-Key' => $sharedKey])
+            ->postJson("/api/v1/admin/orders/{$order1->id}/refund", [
+                'amount' => 300.00,
+                'reason' => 'Order 1 partial refund',
+            ]);
+        $res1->assertStatus(200);
+
+        // Attempting to reuse the same Idempotency-Key on Order 2 must fail with 422
+        $res2 = $this->actingAs($this->admin, 'sanctum')
+            ->withHeaders(['Idempotency-Key' => $sharedKey])
+            ->postJson("/api/v1/admin/orders/{$order2->id}/refund", [
+                'amount' => 300.00,
+                'reason' => 'Order 2 illegal key reuse',
+            ]);
+        $res2->assertStatus(422);
+        $this->assertEquals(0, Refund::where('order_id', $order2->id)->count());
     }
 }

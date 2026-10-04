@@ -170,8 +170,17 @@ export const adminApi = {
     return apiClient.post(`/admin/orders/${orderId}/auto-dispatch`);
   },
 
-  refundOrder: async (orderId: string | number, payload: { amount: number; reason: string }): Promise<ApiResponse<any>> => {
-    return apiClient.post(`/admin/orders/${orderId}/refund`, payload);
+  refundOrder: async (
+    orderId: string | number,
+    payload: { amount: number; reason: string; idempotency_key?: string },
+    idempotencyKey?: string
+  ): Promise<ApiResponse<any>> => {
+    const key = idempotencyKey || payload.idempotency_key || `refund_admin_ord_${orderId}_amt_${Math.round(payload.amount * 100)}_${Date.now()}`;
+    return apiClient.post(
+      `/admin/orders/${orderId}/refund`,
+      { ...payload, idempotency_key: key },
+      { headers: { 'Idempotency-Key': key } }
+    );
   },
 
   collectCod: async (orderId: string | number, payload?: { reference?: string }): Promise<ApiResponse<any>> => {

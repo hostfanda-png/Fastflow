@@ -335,13 +335,19 @@ class StripeGateway implements PaymentGatewayInterface
 
         $amountInCents = (int)round($amount * 100);
 
-        // Generate or use deterministic idempotency key
+        // Resolve or reuse persistent operation-bound idempotency key from Refunds table
         if (!$idempotencyKey) {
-            $alreadyRefundedCount = \App\Models\Refund::where('order_id', $order->id)
-                ->whereIn('status', [\App\Models\Refund::STATUS_COMPLETED, \App\Models\Refund::STATUS_PROCESSING])
-                ->count();
-            $nextSeq = $alreadyRefundedCount + 1;
-            $idempotencyKey = "refund_ord_{$order->id}_seq_{$nextSeq}_amt_{$amountInCents}";
+            $existingOp = \App\Models\Refund::where('order_id', $order->id)
+                ->whereIn('status', [\App\Models\Refund::STATUS_PROCESSING, \App\Models\Refund::STATUS_PENDING])
+                ->whereNotNull('idempotency_key')
+                ->latest('id')
+                ->first();
+
+            if ($existingOp && !empty($existingOp->idempotency_key)) {
+                $idempotencyKey = $existingOp->idempotency_key;
+            } else {
+                $idempotencyKey = "refund_ord_{$order->id}_amt_{$amountInCents}_" . md5($order->id . '|' . $amountInCents . '|' . trim($reason));
+            }
         }
 
         try {

@@ -117,10 +117,14 @@ To maintain strict technical accuracy:
   - **Idempotency & Double-Collection Prevention:** Prevents already-paid orders from being collected twice.
   - **Multi-Tenant Isolation:** Enforces access control restricting collection exclusively to `super_admin`, the authenticated restaurant owner who owns the order's restaurant, or the assigned delivery rider.
 
-- **Stripe Refund Idempotency & Concurrency Safety (`POST /api/v1/admin/orders/{order}/refund`):**
-  - **Deterministic Idempotency Key:** Implemented stable idempotency key generation (`refund_ord_{id}_seq_{seq}_amt_{cents}`) in `PaymentService::processRefund` and `StripeGateway::refund`.
-  - **Retry-Safe Gateway Dispatch:** The idempotency key is forwarded to Stripe via SDK options (`['idempotency_key' => $key]`) and direct HTTPS header (`Idempotency-Key: $key`), guaranteeing that gateway retries reuse the identical idempotency identity without producing duplicate Stripe refunds.
-  - **Balance & Over-Refund Guard:** Enforces `amount <= (paidAmount - alreadyRefunded)` with concurrency row locking (`lockForUpdate()`) inside an ACID database transaction.
+- **Stripe Refund Idempotency & Concurrency Safety (`POST /api/v1/admin/orders/{order}/refund` & `POST /api/v1/orders/{order}/refund`):**
+  - **Database-Backed Persistent Operation & Idempotency Key:** Added `idempotency_key` unique column to the `refunds` table (`2026_10_03_000001_add_idempotency_key_to_refunds_table.php`) and `Refund` model.
+  - **Client `Idempotency-Key` Header & Cross-Order Protection:** `PaymentController@refund` accepts `Idempotency-Key` / `X-Idempotency-Key` headers (or `idempotency_key` payload) and binds the key to the target order. Reusing an `Idempotency-Key` across different orders or with a mismatched amount is strictly rejected (HTTP 422).
+  - **Two-Phase Pre-Gateway Reservation & Retry Recovery (`PaymentService::processRefund`):**
+    1. **Phase 1 (Pre-Gateway Reservation):** Locks `Order` and `Payment` (`lockForUpdate()`), checks for an existing `Refund` operation by `idempotency_key` (or in-flight `processing`/`pending` operation matching `(order_id, amount, reason)` when no client key is supplied), or persists a new `Refund` row in `STATUS_PROCESSING` with a stable operation-bound key (`refund_ord_{orderId}_op_{refundId}_amt_{cents}`) **before** calling Stripe.
+    2. **Phase 2 (Idempotent Gateway Execution):** Dispatches the refund request to `StripeGateway::refund` using the persisted `idempotency_key` (`['idempotency_key' => $key]` / `Idempotency-Key: $key` header).
+    3. **Phase 3 (Idempotent Finalization):** Transitions the persisted `Refund` record to `STATUS_COMPLETED`, updates `Payment` and `Order` statuses based on cumulative completed refunds, and ensures a single directional `FinancialTransaction` debit entry is recorded (`ensureRefundFinalized`). If Stripe succeeds but local finalization is interrupted, a subsequent retry recovers the existing `Refund` operation without issuing a second Stripe refund or duplicating ledger records.
+  - **Balance & Over-Refund Guard:** Enforces `amount <= (paidAmount - alreadyRefunded)` counting both `completed` and `processing` refunds inside an ACID transaction.
   - **Tenant Isolation:** Enforces multi-tenant authorization ensuring restaurant owners cannot refund orders from other restaurants.
   - **Comprehensive Audit Trail:** Emits `AuditService::log` and generates directional financial transactions for immutable ledger tracking.
 
@@ -137,6 +141,9 @@ To maintain strict technical accuracy:
   - Added Test 27: `test_over_refund_rejection_prevents_refund_amount_exceeding_remaining_balance()`
   - Added Test 28: `test_tenant_isolation_prevents_restaurant_owners_from_refunding_other_restaurants_orders()`
   - Added Test 29: `test_unauthorized_customer_cannot_collect_cod_or_issue_refund()`
+  - Added Test 30: `test_client_idempotency_key_retry_returns_existing_refund_without_duplicate_stripe_call_or_ledger_entry()`
+  - Added Test 31: `test_recovery_of_in_flight_processing_refund_reuses_same_idempotency_key_and_refund_record()`
+  - Added Test 32: `test_cross_order_reuse_of_idempotency_key_is_rejected()`
 - **Backend Runtime Execution (`php artisan test`):** **ENVIRONMENT LIMITATION** — Neither `php` nor `composer` executables are installed in this container environment. Code architecture and domain rules are fully source-verified.
 
 ---

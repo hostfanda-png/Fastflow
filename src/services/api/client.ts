@@ -108,8 +108,9 @@ class ApiClient {
     return this.request<T>(url, { method: 'GET' });
   }
 
-  public post<T = any>(endpoint: string, body?: any): Promise<ApiResponse<T>> {
+  public post<T = any>(endpoint: string, body?: any, options: RequestInit = {}): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
     });
