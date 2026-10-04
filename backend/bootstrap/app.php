@@ -49,4 +49,22 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 403);
             }
         });
+
+        $exceptions->render(function (\Illuminate\Database\Eloquent\ModelNotFoundException $e, $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Requested resource was not found.',
+                ], 404);
+            }
+        });
+
+        $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException $e, $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Requested API endpoint or resource was not found.',
+                ], 404);
+            }
+        });
     })->create();

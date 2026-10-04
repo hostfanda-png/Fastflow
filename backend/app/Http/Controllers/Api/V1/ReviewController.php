@@ -12,6 +12,42 @@ use Illuminate\Http\JsonResponse;
 
 class ReviewController extends Controller
 {
+    public function index(Request $request): JsonResponse
+    {
+        $query = Review::where('is_approved', true)
+            ->with(['customer:id,name,avatar', 'restaurant:id,name,slug'])
+            ->orderByDesc('created_at');
+
+        if ($restaurantId = $request->query('restaurant_id')) {
+            $query->where('restaurant_id', $restaurantId);
+        }
+
+        $limit = min(50, max(1, (int)$request->query('limit', 20)));
+        $reviews = $query->limit($limit)->get()->map(function ($rev) {
+            return [
+                'id' => (string)$rev->id,
+                'order_id' => $rev->order_id,
+                'restaurant_id' => $rev->restaurant_id,
+                'restaurantId' => (string)$rev->restaurant_id,
+                'restaurantName' => $rev->restaurant?->name ?? '',
+                'customer_id' => $rev->customer_id,
+                'customerId' => (string)$rev->customer_id,
+                'customerName' => $rev->customer?->name ?? 'Verified Customer',
+                'customerAvatar' => $rev->customer?->avatar,
+                'rating' => (int)$rev->rating,
+                'food_rating' => (int)$rev->food_rating,
+                'foodRating' => (int)$rev->food_rating,
+                'comment' => $rev->comment,
+                'is_approved' => (bool)$rev->is_approved,
+                'isApproved' => (bool)$rev->is_approved,
+                'created_at' => $rev->created_at?->toIso8601String(),
+                'createdAt' => $rev->created_at?->toIso8601String() ?? '',
+            ];
+        });
+
+        return $this->sendResponse($reviews, 'Approved reviews retrieved');
+    }
+
     public function store(Request $request): JsonResponse
     {
         $user = $request->user();

@@ -336,8 +336,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setApiError(null);
     try {
       const res = await authApi.login(email, password);
-      if (res.data?.user) {
-        const u = res.data.user;
+      if (!res.data?.token) {
+        throw new Error(res.message || 'Authentication failed: No Sanctum token returned from server.');
+      }
+
+      // Verify token against GET /api/v1/auth/me and hydrate authoritative user/role/permissions
+      let u = res.data.user;
+      try {
+        const meRes = await authApi.me();
+        if (meRes.data) {
+          u = meRes.data;
+        }
+      } catch {
+        // Fallback to user payload returned from /auth/login if /auth/me fails transiently
+      }
+
+      if (u) {
         const mappedUser: User = {
           id: String(u.id),
           name: u.name,
@@ -351,6 +365,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(mappedUser);
         setIsLoggedIn(true);
         showToast(`Welcome back, ${u.name}!`, 'success');
+        await refreshData();
       }
     } catch (err: any) {
       const msg = err.message || 'Login failed. Please check credentials.';
@@ -366,8 +381,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setApiError(null);
     try {
       const res = await authApi.register(userData);
-      if (res.data?.user) {
-        const u = res.data.user;
+      if (!res.data?.token) {
+        throw new Error(res.message || 'Registration failed: No Sanctum token returned from server.');
+      }
+
+      let u = res.data.user;
+      try {
+        const meRes = await authApi.me();
+        if (meRes.data) {
+          u = meRes.data;
+        }
+      } catch {
+        // Fallback to user payload returned from /auth/register
+      }
+
+      if (u) {
         const mappedUser: User = {
           id: String(u.id),
           name: u.name,
@@ -380,6 +408,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         setCurrentUser(mappedUser);
         setIsLoggedIn(true);
+        await refreshData();
       }
     } catch (err: any) {
       const msg = err.message || 'Registration failed.';
@@ -524,17 +553,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsLoading(true);
     setApiError(null);
     try {
-      const [restRes, catRes, coupRes, revRes, riderRes] = await Promise.allSettled([
+      const hasToken = Boolean(localStorage.getItem('fastflow_auth_token'));
+      const [restRes, catRes, coupRes, revRes] = await Promise.allSettled([
         restaurantApi.getAll({ city: selectedCity }),
         categoryApi.getAll(),
         couponApi.getAll(),
         reviewApi.getAll(),
-        adminApi.getRiders(),
       ]);
 
-      if (restRes.status === 'fulfilled' && restRes.value.data) {
+      if (restRes.status === 'rejected') {
+        setApiError(
+          restRes.reason?.message ||
+            'Unable to connect to the Fastflow Laravel API. Ensure the backend server is running and VITE_API_URL is configured.'
+        );
+      } else if (restRes.value.data) {
         setRestaurants(Array.isArray(restRes.value.data) ? restRes.value.data : []);
       }
+
       if (catRes.status === 'fulfilled' && catRes.value.data) {
         setCategories(Array.isArray(catRes.value.data) ? catRes.value.data : []);
       }
@@ -544,12 +579,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (revRes.status === 'fulfilled' && revRes.value.data) {
         setReviews(Array.isArray(revRes.value.data) ? revRes.value.data : []);
       }
-      if (riderRes.status === 'fulfilled' && riderRes.value.data) {
-        setRiders(Array.isArray(riderRes.value.data) ? riderRes.value.data : []);
-      }
 
       // Synchronize authenticated user resources
-      if (localStorage.getItem('fastflow_auth_token')) {
+      if (hasToken) {
         try {
           const [cartRes, ordRes, profRes, favRes, notifRes, addrRes] = await Promise.allSettled([
             cartApi.getCart(),
@@ -565,7 +597,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
 
           if (ordRes.status === 'fulfilled' && ordRes.value.data) {
-            const rawOrders = Array.isArray(ordRes.value.data) ? ordRes.value.data : [];
+            const ordPayload: any = ordRes.value.data;
+            const rawOrders = Array.isArray(ordPayload)
+              ? ordPayload
+              : Array.isArray(ordPayload.orders)
+              ? ordPayload.orders
+              : Array.isArray(ordPayload.data)
+              ? ordPayload.data
+              : [];
             setOrders(rawOrders.map(mapServerOrder));
           }
 

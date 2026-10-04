@@ -30,11 +30,17 @@ A comprehensive, code-level audit was conducted across the Fastflow platform fol
    - Full route parser for all Admin sub-tabs (`/admin/dashboard`, `/admin/restaurants`, `/admin/orders`, `/admin/customers`, `/admin/riders`, `/admin/financials`, `/admin/delivery-zones`, `/admin/audit-logs`, `/admin/settings`) and detail views.
    - SPA navigation helpers (`navigateTo`, `formatAdminPath`).
 
-2. **`src/services/api/client.ts`:**
-   - Path normalization logic stripping redundant leading `/api/v1` prefixes when `baseUrl` already contains `/api/v1`.
-   - Dispatches `fastflow:unauthorized` custom event on HTTP 401.
+2. **`src/services/api/client.ts` & `vite.config.ts`:**
+   - Added `resolveApiBaseUrl()` in `src/services/api/client.ts` to normalize `VITE_API_URL` (supporting both relative `/api/v1` proxy paths and absolute backend URLs like `https://api.example.com` by automatically appending `/api/v1` when omitted) and prevent duplicate `/api/v1/api/v1/...` prefixes.
+   - Configured Vite development and preview server proxies (`vite.config.ts`) forwarding `/api` and `/sanctum` (HTTP methods, headers, `Authorization: Bearer`, and request bodies) to `VITE_BACKEND_URL` (default `http://127.0.0.1:8000`).
+   - Hardened HTTP status handling in `ApiClient.request` (`401`, `403`, `404`, `409`, `422`, `500`, and network/unproxied HTML 404 detection) so unproxied Vite 404 responses vs. real Laravel JSON 404/401/422 responses are clearly distinguished without leaking SQL/stack traces or clearing active sessions during failed login attempts.
 
-3. **`src/components/common/NotFoundView.tsx`:**
+3. **`backend/routes/api.php`, `backend/app/Http/Controllers/Api/V1/ReviewController.php`, `backend/config/cors.php`, & `backend/bootstrap/app.php`:**
+   - Registered `GET /api/v1/reviews` (`ReviewController@index`) to serve public approved reviews alongside `POST /api/v1/reviews` (`ReviewController@store`), aligning 100% of `reviewApi.ts` endpoints with Laravel routes.
+   - Updated `backend/config/cors.php` and `backend/.env.example` to use environment-driven `CORS_ALLOWED_ORIGINS` / `FRONTEND_URL` and `SANCTUM_STATEFUL_DOMAINS` rather than wildcard `*` with `supports_credentials => true`.
+   - Added structured JSON `404` rendering for `NotFoundHttpException` and `ModelNotFoundException` on `api/*` routes in `backend/bootstrap/app.php`.
+
+4. **`src/components/common/NotFoundView.tsx`:**
    - Semantic differentiation between:
      - `frontend_404`: Unknown SPA path.
      - `api_404`: Backend resource missing.

@@ -30,8 +30,8 @@ export const orderApi = {
     return apiClient.post<Order>('/orders/checkout', payload);
   },
 
-  getAll: async (): Promise<ApiResponse<Order[]>> => {
-    return apiClient.get<Order[]>('/orders');
+  getAll: async (params?: { status?: string; per_page?: number; page?: number }): Promise<ApiResponse<{ orders: Order[]; pagination?: any } | Order[]>> => {
+    return apiClient.get<{ orders: Order[]; pagination?: any } | Order[]>('/orders', params);
   },
 
   getById: async (idOrNumber: string | number): Promise<ApiResponse<Order>> => {

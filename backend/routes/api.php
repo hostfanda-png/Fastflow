@@ -37,6 +37,7 @@ Route::prefix('v1')->group(function () {
     Route::get('categories', [MenuController::class, 'getCategories']);
     Route::get('products', [MenuController::class, 'getPublicProducts']);
     Route::get('cuisines', [CuisineController::class, 'index']);
+    Route::get('reviews', [ReviewController::class, 'index']);
     Route::get('coupons', [CouponController::class, 'index']);
     Route::post('coupons/validate', [CouponController::class, 'validateCoupon']);
 
